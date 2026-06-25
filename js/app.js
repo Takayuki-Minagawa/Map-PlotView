@@ -372,6 +372,7 @@
     });
 
     document.addEventListener('keydown', function (e) {
+      if (document.querySelector('.mpv-modal')) return;
       if (e.key === 'Escape' && mapOnlyMode) setMapOnlyMode(false);
     });
     syncMapOnlyControls();
@@ -403,7 +404,16 @@
   function refreshMapSize() {
     if (!mapview || !mapview.map || !mapview.map.invalidateSize) return;
     mapview.map.invalidateSize();
-    setTimeout(function () { mapview.map.invalidateSize(); }, 230);
+    setTimeout(function () { mapview.map.invalidateSize(); }, mapLayoutTransitionMs() + 30);
+  }
+
+  function mapLayoutTransitionMs() {
+    var layout = document.querySelector('.mpv-layout');
+    if (!layout || !global.getComputedStyle) return 200;
+    var raw = global.getComputedStyle(layout).getPropertyValue('--mpv-layout-transition').trim();
+    var value = parseFloat(raw);
+    if (!isFinite(value)) return 200;
+    return raw.indexOf('ms') === -1 ? value * 1000 : value;
   }
 
   function syncLayerControls() {

@@ -16,6 +16,7 @@
   --mpv-active: #e3f2e4;
   --mpv-accent: #2e7d32;
   --mpv-header-h: 48px;
+  --mpv-layout-transition: 200ms;
 }
 [data-theme="dark"] {
   --mpv-bg: #111827;
@@ -50,7 +51,7 @@ body { display: flex; flex-direction: column; min-height: 100vh; height: 100vh; 
 .mpv-status { font-size: 12px; color: var(--mpv-status); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* レイアウト */
-.mpv-layout { flex: 1 1 auto; display: grid; grid-template-columns: 300px 1fr 0; min-height: 0; overflow: hidden; transition: grid-template-columns .2s; }
+.mpv-layout { flex: 1 1 auto; display: grid; grid-template-columns: 300px 1fr 0; min-height: 0; overflow: hidden; transition: grid-template-columns var(--mpv-layout-transition); }
 .mpv-layout:has(.mpv-detail.is-open) { grid-template-columns: 300px 1fr 340px; }
 .mpv-layout.is-map-only { grid-template-columns: 0 1fr 0; }
 .mpv-layout.is-map-only:has(.mpv-detail.is-open) { grid-template-columns: 0 1fr 0; }
@@ -59,7 +60,8 @@ body { display: flex; flex-direction: column; min-height: 100vh; height: 100vh; 
 .mpv-mapwrap { position: relative; min-width: 0; overflow: hidden; }
 #map { position: absolute; inset: 0; }
 .mpv-layout.is-map-only .mpv-sidebar,
-.mpv-layout.is-map-only .mpv-detail {
+.mpv-layout.is-map-only .mpv-detail,
+.mpv-layout.is-map-only .mpv-detail.is-open {
   visibility: hidden;
   overflow: hidden;
   border: 0;
@@ -129,13 +131,6 @@ button.danger { color: #c62828; border-color: #e0a3a3; }
 .mpv-detail { overflow-y: auto; overflow-x: hidden; background: var(--mpv-panel); border-left: 1px solid var(--mpv-border); padding: 0; min-width: 0; }
 .mpv-detail:not(.is-open) { border-left: 0; overflow: hidden; }
 .mpv-detail.is-open { padding: 12px; }
-.mpv-layout.is-map-only .mpv-detail,
-.mpv-layout.is-map-only .mpv-detail.is-open {
-  visibility: hidden;
-  overflow: hidden;
-  border-left: 0;
-  padding: 0;
-}
 .mpv-detail__empty { display: none; }
 .mpv-detail__head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
 .mpv-detail__glyph { width: 34px; height: 34px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 17px; flex: 0 0 auto; }
