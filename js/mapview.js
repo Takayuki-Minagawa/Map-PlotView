@@ -239,9 +239,11 @@
   }
 
   function popupHtml(feature, tag) {
-    var name = global.Symbols.escapeHtml(feature.name || feature.id || '(無名)');
-    var tagName = tag ? global.Symbols.escapeHtml(tag.name || tag.id) : '';
-    return '<div class="mpv-popup"><b>' + name + '</b><br><small>' + tagName + ' / ' + feature.type + '</small></div>';
+    var tr = global.I18n ? global.I18n.t : function (key) { return key; };
+    var typeLabel = global.I18n ? global.I18n.typeLabel(feature.type) : feature.type;
+    var name = global.Symbols.escapeHtml(feature.name || feature.id || tr('unnamed'));
+    var tagName = tag ? global.Symbols.escapeHtml(tag.name || tag.id) : global.Symbols.escapeHtml(tr('uncategorized'));
+    return '<div class="mpv-popup"><b>' + name + '</b><br><small>' + tagName + ' / ' + global.Symbols.escapeHtml(typeLabel) + '</small></div>';
   }
 
   function round(n) { return Math.round(n * 1e6) / 1e6; }

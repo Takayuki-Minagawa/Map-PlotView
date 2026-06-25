@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Map PlotView — 地図プロットツール</title>
+  <meta name="theme-color" content="#1f2933">
+  <title>Map PlotView - 地図プロットツール</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -13,12 +15,17 @@
 </head>
 <body>
   <header class="mpv-header">
-    <h1>🗺 Map PlotView</h1>
+    <h1>Map PlotView</h1>
     <div class="mpv-io">
-      <button id="btnLoad">📂 読込(YAML)</button>
-      <button id="btnSaveYaml">💾 保存(YAML)</button>
-      <button id="btnLoadSample">サンプル</button>
+      <button id="btnLoad" data-i18n="loadYaml">読込(YAML)</button>
+      <button id="btnSaveYaml" data-i18n="saveYaml">保存(YAML)</button>
+      <button id="btnLoadSample" data-i18n="sample">サンプル</button>
       <input type="file" id="fileInput" accept=".yaml,.yml,text/yaml" hidden>
+    </div>
+    <div class="mpv-settings" aria-label="display settings">
+      <button id="btnManual" data-i18n="manualOpen">マニュアル</button>
+      <button id="btnLangToggle">English</button>
+      <button id="btnThemeToggle">ダーク</button>
     </div>
     <div id="status" class="mpv-status"></div>
   </header>
@@ -27,58 +34,58 @@
     <!-- 左：サイドバー -->
     <aside class="mpv-sidebar">
       <section class="mpv-panel">
-        <h2>背景 / オーバーレイ</h2>
+        <h2 data-i18n="layersTitle">背景 / オーバーレイ</h2>
         <div class="mpv-baselayers">
-          <label><input type="radio" name="base" value="std"> 標準</label>
-          <label><input type="radio" name="base" value="pale" checked> 淡色</label>
-          <label><input type="radio" name="base" value="photo"> 写真</label>
-          <label><input type="radio" name="base" value="osm"> OSM</label>
+          <label><input type="radio" name="base" value="std"> <span data-i18n="baseStd">標準</span></label>
+          <label><input type="radio" name="base" value="pale" checked> <span data-i18n="basePale">淡色</span></label>
+          <label><input type="radio" name="base" value="photo"> <span data-i18n="basePhoto">写真</span></label>
+          <label><input type="radio" name="base" value="osm"> <span data-i18n="baseOsm">OSM</span></label>
         </div>
         <div class="mpv-overlays">
-          <label><input type="checkbox" data-overlay="afm"> 活断層図</label>
+          <label><input type="checkbox" data-overlay="afm"> <span data-i18n="overlayAfm">活断層図</span></label>
         </div>
       </section>
 
       <section class="mpv-panel">
         <div class="mpv-panel__head">
-          <h2>タグ</h2>
-          <button id="btnAddTag" class="mpv-mini">＋追加</button>
+          <h2 data-i18n="tagsTitle">タグ</h2>
+          <button id="btnAddTag" class="mpv-mini"><span aria-hidden="true">+</span><span data-i18n="add">追加</span></button>
         </div>
         <div id="tagList" class="mpv-taglist"></div>
       </section>
 
       <section class="mpv-panel">
-        <h2>作図</h2>
+        <h2 data-i18n="drawingTitle">作図</h2>
         <div class="mpv-drawtools">
-          <button id="btnAddPoint">＋点</button>
-          <button id="btnAddLine">／線</button>
-          <button id="btnAddPolygon">▱面</button>
+          <button id="btnAddPoint"><span aria-hidden="true">+</span><span data-i18n="addPoint">点</span></button>
+          <button id="btnAddLine"><span aria-hidden="true">/</span><span data-i18n="addLine">線</span></button>
+          <button id="btnAddPolygon"><span aria-hidden="true">▱</span><span data-i18n="addPolygon">面</span></button>
         </div>
       </section>
 
       <section class="mpv-panel">
         <div class="mpv-panel__head">
-          <h2>範囲抽出</h2>
+          <h2 data-i18n="selectTitle">範囲抽出</h2>
         </div>
         <div class="mpv-selecttools">
-          <button id="btnRectSelect">■ 矩形選択</button>
-          <button id="btnClearSelect" class="mpv-mini">クリア</button>
+          <button id="btnRectSelect"><span aria-hidden="true">□</span><span data-i18n="rectSelect">矩形選択</span></button>
+          <button id="btnClearSelect" class="mpv-mini" data-i18n="clear">クリア</button>
         </div>
         <div class="mpv-selectopts">
-          <label>判定:
+          <label><span data-i18n="judge">判定:</span>
             <select id="selMode">
-              <option value="intersect">交差</option>
-              <option value="within">内包</option>
+              <option value="intersect" data-i18n="intersect">交差</option>
+              <option value="within" data-i18n="within">内包</option>
             </select>
           </label>
-          <label><input type="checkbox" id="chkRespectHidden" checked> 非表示タグを除外</label>
+          <label><input type="checkbox" id="chkRespectHidden" checked> <span data-i18n="respectHidden">非表示タグを除外</span></label>
         </div>
         <div class="mpv-panel__head">
-          <h3>抽出結果 <span id="selectionCount"></span></h3>
+          <h3><span data-i18n="selectionResult">抽出結果</span> <span id="selectionCount"></span></h3>
         </div>
         <div id="selectionList" class="mpv-list"></div>
         <div class="mpv-export">
-          <span>抽出を書出:</span>
+          <span data-i18n="exportSelection">抽出を書出:</span>
           <button id="btnExportSelYaml" class="mpv-mini">YAML</button>
           <button id="btnExportSelGeo" class="mpv-mini">GeoJSON</button>
           <button id="btnExportSelCsv" class="mpv-mini">CSV</button>
@@ -86,7 +93,7 @@
       </section>
 
       <section class="mpv-panel">
-        <h2>プロット一覧</h2>
+        <h2 data-i18n="featureList">プロット一覧</h2>
         <div id="featureList" class="mpv-list"></div>
       </section>
 
@@ -110,6 +117,7 @@
   <script src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js"></script>
 
   <!-- アプリ -->
+  <script src="js/i18n.js"></script>
   <script src="js/symbols.js"></script>
   <script src="js/store.js"></script>
   <script src="js/mapview.js"></script>

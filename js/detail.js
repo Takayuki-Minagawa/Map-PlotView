@@ -3,6 +3,8 @@
   'use strict';
 
   var esc = function (s) { return global.Symbols.escapeHtml(s); };
+  var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
+  var typeLabel = function (type) { return global.I18n ? global.I18n.typeLabel(type) : type; };
 
   function Detail(panelEl, opts) {
     this.el = panelEl;
@@ -12,7 +14,7 @@
 
   Detail.prototype.clearDetail = function () {
     this.current = null;
-    this.el.innerHTML = '<div class="mpv-detail__empty">項目を選択すると詳細が表示されます。</div>';
+    this.el.innerHTML = '<div class="mpv-detail__empty">' + esc(tr('detailEmpty')) + '</div>';
     this.el.classList.remove('is-open');
   };
 
@@ -26,20 +28,20 @@
     var glyph = global.Symbols.glyphFor(feature.symbol || (tag && tag.symbol));
     var color = (tag && tag.color) || '#666';
     html.push('<span class="mpv-detail__glyph" style="background:' + esc(color) + '">' + esc(glyph) + '</span>');
-    html.push('<div><h2>' + esc(feature.name || feature.id || '(無名)') + '</h2>');
+    html.push('<div><h2>' + esc(feature.name || feature.id || tr('unnamed')) + '</h2>');
     html.push('<div class="mpv-detail__sub"><span class="mpv-chip" style="--mpv-color:' + esc(color) + '">' +
-      esc(tag ? (tag.name || tag.id) : '未分類') + '</span> <span class="mpv-type">' + esc(feature.type) + '</span></div></div>');
+      esc(tag ? (tag.name || tag.id) : tr('uncategorized')) + '</span> <span class="mpv-type">' + esc(typeLabel(feature.type)) + '</span></div></div>');
     html.push('</div>');
 
     // 座標 / 計測
-    html.push('<section class="mpv-detail__sec"><h3>座標</h3>');
+    html.push('<section class="mpv-detail__sec"><h3>' + esc(tr('coordinates')) + '</h3>');
     html.push('<div class="mpv-coords">' + coordSummary(feature, m) + '</div></section>');
 
     // properties
     var props = feature.properties || {};
     var keys = Object.keys(props);
     if (keys.length) {
-      html.push('<section class="mpv-detail__sec"><h3>表示項目</h3><table class="mpv-props">');
+      html.push('<section class="mpv-detail__sec"><h3>' + esc(tr('properties')) + '</h3><table class="mpv-props">');
       keys.forEach(function (k) {
         html.push('<tr><th>' + esc(k) + '</th><td>' + esc(formatVal(props[k])) + '</td></tr>');
       });
@@ -48,14 +50,14 @@
 
     // note
     if (feature.note) {
-      html.push('<section class="mpv-detail__sec"><h3>メモ</h3><div class="mpv-note">' +
+      html.push('<section class="mpv-detail__sec"><h3>' + esc(tr('note')) + '</h3><div class="mpv-note">' +
         esc(feature.note).replace(/\n/g, '<br>') + '</div></section>');
     }
 
     // 写真
     var photos = feature.photos || [];
     if (photos.length) {
-      html.push('<section class="mpv-detail__sec"><h3>写真</h3><div class="mpv-gallery">');
+      html.push('<section class="mpv-detail__sec"><h3>' + esc(tr('photos')) + '</h3><div class="mpv-gallery">');
       photos.forEach(function (p, i) {
         var src = resolveSrc(p.src, meta);
         html.push('<figure class="mpv-thumb" data-photo-index="' + i + '">' +
@@ -67,9 +69,9 @@
 
     // アクション
     html.push('<div class="mpv-detail__actions">' +
-      '<button data-action="focus">地図でフォーカス</button>' +
-      '<button data-action="edit">編集</button>' +
-      '<button data-action="delete" class="danger">削除</button></div>');
+      '<button data-action="focus">' + esc(tr('focusOnMap')) + '</button>' +
+      '<button data-action="edit">' + esc(tr('edit')) + '</button>' +
+      '<button data-action="delete" class="danger">' + esc(tr('delete')) + '</button></div>');
 
     this.el.innerHTML = html.join('');
 
@@ -103,11 +105,11 @@
     box.className = 'mpv-lightbox';
     var info = [];
     if (photo.caption) info.push(esc(photo.caption));
-    if (photo.takenAt) info.push('撮影: ' + esc(String(photo.takenAt)));
-    if (photo.location) info.push('位置: ' + esc(photo.location.join(', ')));
+    if (photo.takenAt) info.push(esc(tr('takenAt')) + ': ' + esc(String(photo.takenAt)));
+    if (photo.location) info.push(esc(tr('location')) + ': ' + esc(photo.location.join(', ')));
     box.innerHTML =
       '<div class="mpv-lightbox__inner">' +
-      '<button class="mpv-lightbox__close" aria-label="閉じる">×</button>' +
+      '<button class="mpv-lightbox__close" aria-label="' + esc(tr('close')) + '">x</button>' +
       '<img src="' + esc(src) + '" alt="">' +
       (info.length ? '<div class="mpv-lightbox__cap">' + info.join(' ／ ') + '</div>' : '') +
       '</div>';
@@ -139,19 +141,19 @@
   function coordSummary(feature, m) {
     if (feature.type === 'point') {
       var c = feature.coordinates;
-      return '緯度 ' + c[0] + ' / 経度 ' + c[1];
+      return esc(tr('latitude')) + ' ' + c[0] + ' / ' + esc(tr('longitude')) + ' ' + c[1];
     }
     if (feature.type === 'line') {
       var n = feature.coordinates.length;
-      var s = '頂点数 ' + n;
-      if (typeof m.length === 'number') s += ' ／ 概算長 ' + m.length.toFixed(3) + ' km';
-      s += '<br>代表点: ' + feature.coordinates[0].join(', ');
+      var s = esc(tr('vertexCount', { count: n }));
+      if (typeof m.length === 'number') s += ' / ' + esc(tr('approxLength', { value: m.length.toFixed(3) }));
+      s += '<br>' + esc(tr('representativePoint')) + ': ' + feature.coordinates[0].join(', ');
       return s;
     }
     if (feature.type === 'polygon') {
       var verts = feature.coordinates.reduce(function (a, r) { return a + r.length; }, 0);
-      var s2 = 'リング数 ' + feature.coordinates.length + ' ／ 頂点数 ' + verts;
-      if (typeof m.area === 'number') s2 += '<br>概算面積 ' + formatArea(m.area);
+      var s2 = esc(tr('ringVertexCount', { rings: feature.coordinates.length, verts: verts }));
+      if (typeof m.area === 'number') s2 += '<br>' + esc(tr('approxArea', { value: formatArea(m.area) }));
       return s2;
     }
     return '';

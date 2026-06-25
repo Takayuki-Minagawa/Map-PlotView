@@ -3,6 +3,8 @@
   'use strict';
 
   var esc = function (s) { return global.Symbols.escapeHtml(s); };
+  var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
+  var typeLabel = function (type) { return global.I18n ? global.I18n.typeLabel(type) : type; };
 
   function UI(refs, handlers) {
     this.refs = refs;          // {tagList, featureList, selectionList, selectionCount, warnings}
@@ -26,8 +28,8 @@
         '<span class="mpv-tag__name">' + esc(t.name || t.id) + '</span>' +
         '</label>' +
         '<span class="mpv-tag__btns">' +
-        '<button data-act="edit" title="編集">✎</button>' +
-        '<button data-act="del" title="削除">🗑</button></span>';
+        '<button data-act="edit" title="' + esc(tr('edit')) + '">✎</button>' +
+        '<button data-act="del" title="' + esc(tr('delete')) + '">x</button></span>';
       row.querySelector('input').addEventListener('change', function (e) {
         if (self.h.onToggleTag) self.h.onToggleTag(t.id, e.target.checked);
       });
@@ -49,17 +51,17 @@
   /* 抽出結果リスト */
   UI.prototype.renderSelectionList = function (features, tagsById, activeId) {
     if (this.refs.selectionCount) {
-      this.refs.selectionCount.textContent = features.length ? ('（' + features.length + '件）') : '';
+      this.refs.selectionCount.textContent = features.length ? tr('selectedCount', { count: features.length }) : '';
     }
     this._renderRows(this.refs.selectionList, features, tagsById, activeId,
-      '<div class="mpv-empty">矩形選択でデータを抽出します。</div>');
+      '<div class="mpv-empty">' + esc(tr('selectionEmpty')) + '</div>');
   };
 
   UI.prototype._renderRows = function (el, features, tagsById, activeId, emptyHtml) {
     var self = this;
     el.innerHTML = '';
     if (!features.length) {
-      el.innerHTML = emptyHtml || '<div class="mpv-empty">データがありません。</div>';
+      el.innerHTML = emptyHtml || '<div class="mpv-empty">' + esc(tr('noData')) + '</div>';
       return;
     }
     features.forEach(function (f) {
@@ -71,7 +73,7 @@
       row.innerHTML =
         '<span class="mpv-row__glyph" style="background:' + esc(color) + '">' + esc(glyph) + '</span>' +
         '<span class="mpv-row__name">' + esc(f.name || f.id) + '</span>' +
-        '<span class="mpv-row__meta">' + esc(tag ? (tag.name || tag.id) : '未分類') + ' · ' + esc(f.type) + '</span>';
+        '<span class="mpv-row__meta">' + esc(tag ? (tag.name || tag.id) : tr('uncategorized')) + ' · ' + esc(typeLabel(f.type)) + '</span>';
       row.addEventListener('click', function () {
         if (self.h.onSelectFeature) self.h.onSelectFeature(f.id);
       });
@@ -84,7 +86,7 @@
     if (!el) return;
     if (!warnings || !warnings.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
     el.style.display = '';
-    el.innerHTML = '<b>⚠ 読込時の注意 (' + warnings.length + ')</b><ul>' +
+    el.innerHTML = '<b>' + esc(tr('warningsTitle', { count: warnings.length })) + '</b><ul>' +
       warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
   };
 
@@ -93,12 +95,12 @@
     var isNew = !tag;
     tag = tag || { id: '', name: '', color: '#2e7d32', symbol: 'pin', description: '' };
     var body =
-      field('id', 'ID', '<input name="id" value="' + esc(tag.id) + '" ' + (isNew ? '' : 'readonly') + '>') +
-      field('name', '名称', '<input name="name" value="' + esc(tag.name || '') + '">') +
-      field('color', '色', '<input name="color" type="color" value="' + esc(tag.color || '#2e7d32') + '">') +
-      field('symbol', '記号', symbolSelect(tag.symbol)) +
-      field('description', '説明', '<textarea name="description">' + esc(tag.description || '') + '</textarea>');
-    modal(isNew ? 'タグを追加' : 'タグを編集', body, function (form) {
+      field('id', tr('fieldId'), '<input name="id" value="' + esc(tag.id) + '" ' + (isNew ? '' : 'readonly') + '>') +
+      field('name', tr('fieldName'), '<input name="name" value="' + esc(tag.name || '') + '">') +
+      field('color', tr('fieldColor'), '<input name="color" type="color" value="' + esc(tag.color || '#2e7d32') + '">') +
+      field('symbol', tr('fieldSymbol'), symbolSelect(tag.symbol)) +
+      field('description', tr('fieldDescription'), '<textarea name="description">' + esc(tag.description || '') + '</textarea>');
+    modal(isNew ? tr('addTagTitle') : tr('editTagTitle'), body, function (form) {
       var t = {
         id: form.id.value.trim(),
         name: form.name.value.trim(),
@@ -106,7 +108,7 @@
         symbol: form.symbol.value,
         description: form.description.value
       };
-      if (!t.id) { alert('IDは必須です'); return false; }
+      if (!t.id) { alert(tr('idRequired')); return false; }
       onSave(t, isNew);
       return true;
     });
@@ -124,22 +126,22 @@
     }).join('\n');
 
     var body =
-      field('id', 'ID', '<input name="id" value="' + esc(feature.id || '') + '" ' + (isNew ? '' : 'readonly') + '>') +
-      field('name', '名称', '<input name="name" value="' + esc(feature.name || '') + '">') +
-      field('tag', 'タグ', '<select name="tag">' + tagOpts + '</select>') +
-      field('symbol', '記号(上書き任意)', symbolSelect(feature.symbol, true)) +
-      '<div class="mpv-field"><label>種別/座標</label><div class="mpv-readonly">' +
-        esc(feature.type) + ' : ' + esc(coordPreview(feature)) + '</div></div>' +
-      field('props', '表示項目 (key: value 改行区切り)', '<textarea name="props" rows="4">' + esc(propsText) + '</textarea>') +
-      field('note', 'メモ', '<textarea name="note" rows="3">' + esc(feature.note || '') + '</textarea>') +
-      '<div class="mpv-field"><label>写真</label>' +
+      field('id', tr('fieldId'), '<input name="id" value="' + esc(feature.id || '') + '" ' + (isNew ? '' : 'readonly') + '>') +
+      field('name', tr('fieldName'), '<input name="name" value="' + esc(feature.name || '') + '">') +
+      field('tag', tr('fieldTag'), '<select name="tag">' + tagOpts + '</select>') +
+      field('symbol', tr('fieldSymbolOverride'), symbolSelect(feature.symbol, true)) +
+      '<div class="mpv-field"><label>' + esc(tr('fieldTypeCoords')) + '</label><div class="mpv-readonly">' +
+        esc(typeLabel(feature.type)) + ' : ' + esc(coordPreview(feature)) + '</div></div>' +
+      field('props', tr('fieldProps'), '<textarea name="props" rows="4">' + esc(propsText) + '</textarea>') +
+      field('note', tr('fieldNote'), '<textarea name="note" rows="3">' + esc(feature.note || '') + '</textarea>') +
+      '<div class="mpv-field"><label>' + esc(tr('fieldPhotos')) + '</label>' +
         '<div class="mpv-photo-edit" id="mpvPhotoEdit"></div>' +
         '<input type="file" id="mpvPhotoFile" accept="image/*" multiple>' +
-        '<label class="mpv-embed"><input type="checkbox" id="mpvEmbed"> Data URLで埋め込み (方式C)</label>' +
+        '<label class="mpv-embed"><input type="checkbox" id="mpvEmbed"> ' + esc(tr('embedDataUrl')) + '</label>' +
       '</div>';
 
     var self = this;
-    modal(isNew ? 'プロットを追加' : 'プロットを編集', body, function (form) {
+    modal(isNew ? tr('addPlotTitle') : tr('editPlotTitle'), body, function (form) {
       var f = Object.assign({}, feature);
       f.id = form.id.value.trim();
       f.name = form.name.value.trim();
@@ -148,7 +150,7 @@
       f.note = form.note.value || undefined;
       f.properties = parseProps(form.props.value);
       f.photos = photos.length ? photos : undefined;
-      if (!f.id) { alert('IDは必須です'); return false; }
+      if (!f.id) { alert(tr('idRequired')); return false; }
       onSave(f, isNew);
       return true;
     }, function (modalEl) {
@@ -157,8 +159,8 @@
       function redraw() {
         listEl.innerHTML = photos.map(function (p, i) {
           return '<div class="mpv-photo-item"><img src="' + esc(global.Detail.resolveSrc(p.src, ctx.meta)) + '">' +
-            '<input data-i="' + i + '" data-k="caption" placeholder="キャプション" value="' + esc(p.caption || '') + '">' +
-            '<button data-del="' + i + '">×</button></div>';
+            '<input data-i="' + i + '" data-k="caption" placeholder="' + esc(tr('placeholderCaption')) + '" value="' + esc(p.caption || '') + '">' +
+            '<button data-del="' + i + '">x</button></div>';
         }).join('');
         listEl.querySelectorAll('input[data-k]').forEach(function (inp) {
           inp.addEventListener('input', function () { photos[+inp.getAttribute('data-i')].caption = inp.value; });
@@ -224,7 +226,7 @@
   }
 
   function symbolSelect(current, allowEmpty) {
-    var opts = allowEmpty ? '<option value="">(タグ既定)</option>' : '';
+    var opts = allowEmpty ? '<option value="">' + esc(tr('symbolDefault')) + '</option>' : '';
     Object.keys(global.Symbols.GLYPHS).forEach(function (k) {
       opts += '<option value="' + k + '"' + (k === current ? ' selected' : '') + '>' +
         global.Symbols.GLYPHS[k] + ' ' + k + '</option>';
@@ -248,9 +250,9 @@
 
   function coordPreview(f) {
     if (f.type === 'point') return f.coordinates.join(', ');
-    if (!f.coordinates || !f.coordinates.length) return '(未設定)';
+    if (!f.coordinates || !f.coordinates.length) return tr('coordinateUnset');
     var n = f.type === 'line' ? f.coordinates.length : f.coordinates[0].length;
-    return n + '点';
+    return tr('pointsCount', { count: n });
   }
 
   function formatVal(v) {
@@ -265,10 +267,10 @@
     back.className = 'mpv-modal';
     back.innerHTML =
       '<form class="mpv-modal__box">' +
-      '<header><h3>' + esc(title) + '</h3><button type="button" class="mpv-modal__x">×</button></header>' +
+      '<header><h3>' + esc(title) + '</h3><button type="button" class="mpv-modal__x" aria-label="' + esc(tr('close')) + '">x</button></header>' +
       '<div class="mpv-modal__body">' + bodyHtml + '</div>' +
-      '<footer><button type="button" class="mpv-cancel">キャンセル</button>' +
-      '<button type="submit" class="mpv-ok">保存</button></footer></form>';
+      '<footer><button type="button" class="mpv-cancel">' + esc(tr('cancel')) + '</button>' +
+      '<button type="submit" class="mpv-ok">' + esc(tr('save')) + '</button></footer></form>';
     var submitted = false;
     function close() {
       if (back.parentNode) back.parentNode.removeChild(back);

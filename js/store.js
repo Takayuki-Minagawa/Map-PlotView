@@ -10,6 +10,7 @@
     baseLayer: 'pale',
     overlays: []
   };
+  var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
 
   function isFiniteNumber(n) {
     return typeof n === 'number' && isFinite(n);
@@ -26,36 +27,36 @@
   function validateFeature(f) {
     var errors = [];
     if (!f || typeof f !== 'object') {
-      return { ok: false, errors: ['feature がオブジェクトではありません'] };
+      return { ok: false, errors: [tr('errFeatureNotObject')] };
     }
-    if (!f.id) errors.push('id がありません');
+    if (!f.id) errors.push(tr('errMissingId'));
     var t = f.type;
     if (['point', 'line', 'polygon'].indexOf(t) === -1) {
-      errors.push('type は point|line|polygon のいずれかである必要があります: ' + t);
+      errors.push(tr('errInvalidType', { type: t }));
       return { ok: false, errors: errors };
     }
     var c = f.coordinates;
     if (t === 'point') {
-      if (!isLatLng(c)) errors.push('point の coordinates は [緯度, 経度] の数値2要素である必要があります');
+      if (!isLatLng(c)) errors.push(tr('errInvalidPointCoords'));
     } else if (t === 'line') {
       if (!Array.isArray(c) || c.length < 2) {
-        errors.push('line の coordinates は2点以上の配列である必要があります');
+        errors.push(tr('errLineCoords'));
       } else {
         c.forEach(function (p, i) {
-          if (!isLatLng(p)) errors.push('line 頂点[' + i + '] が不正です（緯度-90..90/経度-180..180）');
+          if (!isLatLng(p)) errors.push(tr('errLineVertex', { index: i }));
         });
       }
     } else if (t === 'polygon') {
       // リング配列: [[ [lat,lng], ... ]]
       if (!Array.isArray(c) || c.length < 1) {
-        errors.push('polygon の coordinates はリング配列である必要があります');
+        errors.push(tr('errPolygonCoords'));
       } else {
         c.forEach(function (ring, ri) {
           if (!Array.isArray(ring) || ring.length < 3) {
-            errors.push('polygon リング[' + ri + '] は3点以上必要です');
+            errors.push(tr('errPolygonRing', { ring: ri }));
           } else {
             ring.forEach(function (p, i) {
-              if (!isLatLng(p)) errors.push('polygon リング[' + ri + '] 頂点[' + i + '] が不正です');
+              if (!isLatLng(p)) errors.push(tr('errPolygonVertex', { ring: ri, index: i }));
             });
           }
         });
@@ -70,10 +71,10 @@
     try {
       doc = global.jsyaml.load(text);
     } catch (e) {
-      throw new Error('YAML構文エラー: ' + e.message);
+      throw new Error(tr('yamlSyntaxError', { message: e.message }));
     }
     if (!doc || typeof doc !== 'object') {
-      throw new Error('YAMLの内容が空、またはオブジェクトではありません');
+      throw new Error(tr('yamlEmptyError'));
     }
     var meta = doc.meta || {};
     var view = Object.assign({}, DEFAULT_VIEW, doc.view || {});
@@ -88,12 +89,12 @@
     rawFeatures.forEach(function (f, idx) {
       var v = validateFeature(f);
       if (!v.ok) {
-        warnings.push('features[' + idx + '] (' + (f && f.id) + '): ' + v.errors.join(' / '));
+        warnings.push(tr('warningFeatureInvalid', { index: idx, id: (f && f.id), errors: v.errors.join(' / ') }));
         return; // 不正なフィーチャはスキップ
       }
       // tag が未定義なら未分類へ
       if (f.tag && !tagIds[f.tag]) {
-        warnings.push('features[' + idx + '] (' + f.id + '): タグ "' + f.tag + '" が未定義のため「未分類」に変更');
+        warnings.push(tr('warningUnknownTag', { index: idx, id: f.id, tag: f.tag }));
         f = Object.assign({}, f, { tag: '__uncategorized__' });
       }
       if (!f.tag) f = Object.assign({}, f, { tag: '__uncategorized__' });
@@ -103,7 +104,7 @@
     // 未分類タグを必要に応じて追加
     var hasUncat = features.some(function (f) { return f.tag === '__uncategorized__'; });
     if (hasUncat && !tagIds['__uncategorized__']) {
-      tags.push({ id: '__uncategorized__', name: '未分類', color: '#9e9e9e' });
+      tags.push({ id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
     }
 
     return { meta: meta, view: view, tags: tags, features: features, warnings: warnings };

@@ -19,6 +19,7 @@
   var respectHidden = true;
   var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
   var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
+  var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
 
   function tagsArray() { return Array.from(state.tags.values()); }
   function featuresArray() { return Array.from(state.features.values()); }
@@ -28,6 +29,8 @@
   function isHidden(feature) { return state.hiddenTags.has(feature.tag); }
 
   function boot() {
+    if (global.I18n) global.I18n.init();
+
     mapview = new global.MapView();
     mapview.initMap(document.getElementById('map'), state.view || global.Store.DEFAULT_VIEW, {
       onFeatureClick: selectFeature
@@ -54,6 +57,18 @@
     });
 
     wireToolbar();
+    if (global.I18n) {
+      global.I18n.subscribe(function () {
+        redrawFeatures();
+        renderAll();
+        if (state.activeFeatureId && state.features.has(state.activeFeatureId)) {
+          var f = state.features.get(state.activeFeatureId);
+          detail.showDetail(f, state.tags.get(f.tag), state.meta);
+        } else {
+          detail.clearDetail();
+        }
+      });
+    }
     renderAll();
     restoreAutosave();
   }
@@ -64,7 +79,7 @@
     try {
       parsed = global.Store.parseYaml(text);
     } catch (e) {
-      alert('読込エラー: ' + e.message);
+      alert(tr('loadError', { message: e.message }));
       return;
     }
     state.meta = parsed.meta || {};
@@ -161,10 +176,10 @@
   }
 
   function deleteTag(tagId) {
-    if (!confirm('タグ "' + tagId + '" を削除しますか？（所属フィーチャは未分類へ）')) return;
+    if (!confirm(tr('deleteTagConfirm', { id: tagId }))) return;
     state.tags.delete(tagId);
     if (!state.tags.has('__uncategorized__')) {
-      state.tags.set('__uncategorized__', { id: '__uncategorized__', name: '未分類', color: '#9e9e9e' });
+      state.tags.set('__uncategorized__', { id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
     }
     featuresArray().forEach(function (f) { if (f.tag === tagId) f.tag = '__uncategorized__'; });
     redrawFeatures();
@@ -185,7 +200,7 @@
   }
 
   function deleteFeature(id) {
-    if (!confirm('このプロットを削除しますか？')) return;
+    if (!confirm(tr('deleteFeatureConfirm'))) return;
     state.features.delete(id);
     mapview.removeFeature(id);
     state.selection.ids = state.selection.ids.filter(function (x) { return x !== id; });
@@ -197,7 +212,7 @@
   /* ---- 作図（Geomanがあれば利用） ---- */
   function addFeatureByType(type) {
     if (!mapview.map.pm) {
-      alert('作図ツール(Leaflet-Geoman)が読み込まれていません。');
+      alert(tr('drawToolMissing'));
       return;
     }
     // 既存の作図/矩形選択セッションを解除してから開始（ハンドラ積み増しを防止）
@@ -262,7 +277,7 @@
   function defaultTagId() {
     var first = tagsArray()[0];
     if (first) return first.id;
-    state.tags.set('__uncategorized__', { id: '__uncategorized__', name: '未分類', color: '#9e9e9e' });
+    state.tags.set('__uncategorized__', { id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
     return '__uncategorized__';
   }
 
@@ -279,7 +294,7 @@
     // 進行中の作図/前回の矩形選択セッションを解除（リスナ積み増し・残留矩形を防止）
     cancelDraw();
     cancelRectSelect();
-    setStatus('矩形をドラッグして範囲を指定…');
+    setStatus(tr('dragRect'));
     rectCleanup = mapview.startRectangleSelect(function (rectGeoJSON) {
       rectCleanup = null; // ドラッグ完了でセッション終了（内部cleanupは実行済み）
       state.selection.rect = rectGeoJSON;
@@ -290,7 +305,7 @@
       });
       state.selection.ids = ids;
       ui.renderSelectionList(selectionFeatures(), tagsById(), state.activeFeatureId);
-      setStatus(ids.length + ' 件抽出（' + (selectMode === 'within' ? '内包' : '交差') + '）');
+      setStatus(tr('selectedStatus', { count: ids.length, mode: tr(selectMode === 'within' ? 'within' : 'intersect') }));
     });
   }
 
@@ -360,7 +375,7 @@
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
       .then(loadFromYamlText)
       .catch(function (e) {
-        alert('サンプル読込に失敗しました（file:// では fetch が制限される場合があります）。\nローカルサーバ経由で開くか、ファイル選択から sample.yaml を読み込んでください。\n' + e.message);
+        alert(tr('sampleLoadError', { message: e.message }));
       });
   }
 
@@ -374,7 +389,7 @@
     var saved;
     try { saved = localStorage.getItem(LS_KEY); } catch (e) { saved = null; }
     if (saved) {
-      if (confirm('前回の編集データを復元しますか？')) loadFromYamlText(saved);
+      if (confirm(tr('restoreAutosave'))) loadFromYamlText(saved);
     }
   }
 
