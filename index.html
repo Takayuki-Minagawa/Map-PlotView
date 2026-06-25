@@ -23,6 +23,7 @@
       <input type="file" id="fileInput" accept=".yaml,.yml,text/yaml" hidden>
     </div>
     <div class="mpv-settings" aria-label="display settings">
+      <button id="btnMapOnlyToggle" data-i18n="mapOnlyOpen" data-i18n-aria="mapOnlyOpen">地図のみ</button>
       <button id="btnManual" data-i18n="manualOpen">マニュアル</button>
       <button id="btnLangToggle">English</button>
       <button id="btnThemeToggle">ダーク</button>
@@ -103,6 +104,7 @@
     <!-- 中央：地図 -->
     <main class="mpv-mapwrap">
       <div id="map"></div>
+      <button id="btnMapOnlyRestore" class="mpv-map-restore" data-i18n="mapOnlyClose" data-i18n-aria="mapOnlyClose" hidden>パネルを表示</button>
     </main>
 
     <!-- 右：詳細ビューア -->

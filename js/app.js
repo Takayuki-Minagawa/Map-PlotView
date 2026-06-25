@@ -17,6 +17,7 @@
   var mapview, detail, ui;
   var selectMode = 'intersect';
   var respectHidden = true;
+  var mapOnlyMode = false;
   var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
   var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
   var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
@@ -63,6 +64,7 @@
         if (mapview.map && mapview.map.closePopup) mapview.map.closePopup();
         redrawFeatures();
         renderAll();
+        syncMapOnlyControls();
         if (state.activeFeatureId && state.features.has(state.activeFeatureId)) {
           var f = state.features.get(state.activeFeatureId);
           detail.showDetail(f, state.tags.get(f.tag), state.meta);
@@ -338,6 +340,8 @@
     });
     on('btnSaveYaml', 'click', function () { download('map-data.yaml', exportYaml(), 'text/yaml;charset=utf-8'); });
     on('btnLoadSample', 'click', loadSample);
+    on('btnMapOnlyToggle', 'click', function () { setMapOnlyMode(!mapOnlyMode); });
+    on('btnMapOnlyRestore', 'click', function () { setMapOnlyMode(false); });
 
     on('btnAddTag', 'click', function () { ui.openTagEditor(null, saveTag); });
     on('btnAddPoint', 'click', function () { addFeatureByType('point'); });
@@ -366,6 +370,40 @@
     document.querySelectorAll('input[data-overlay]').forEach(function (c) {
       c.addEventListener('change', function () { mapview.toggleOverlay(c.getAttribute('data-overlay'), c.checked); autosave(); });
     });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && mapOnlyMode) setMapOnlyMode(false);
+    });
+    syncMapOnlyControls();
+  }
+
+  function setMapOnlyMode(on) {
+    mapOnlyMode = !!on;
+    var layout = document.querySelector('.mpv-layout');
+    if (layout) layout.classList.toggle('is-map-only', mapOnlyMode);
+    syncMapOnlyControls();
+    refreshMapSize();
+  }
+
+  function syncMapOnlyControls() {
+    var toggle = document.getElementById('btnMapOnlyToggle');
+    var restore = document.getElementById('btnMapOnlyRestore');
+    if (toggle) {
+      toggle.textContent = tr(mapOnlyMode ? 'mapOnlyClose' : 'mapOnlyOpen');
+      toggle.setAttribute('aria-label', tr(mapOnlyMode ? 'mapOnlyClose' : 'mapOnlyOpen'));
+      toggle.setAttribute('aria-pressed', mapOnlyMode ? 'true' : 'false');
+    }
+    if (restore) {
+      restore.textContent = tr('mapOnlyClose');
+      restore.setAttribute('aria-label', tr('mapOnlyClose'));
+      restore.hidden = !mapOnlyMode;
+    }
+  }
+
+  function refreshMapSize() {
+    if (!mapview || !mapview.map || !mapview.map.invalidateSize) return;
+    mapview.map.invalidateSize();
+    setTimeout(function () { mapview.map.invalidateSize(); }, 230);
   }
 
   function syncLayerControls() {
