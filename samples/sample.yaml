@@ -1,0 +1,79 @@
+version: 2
+meta:
+  title: 〇〇地区 調査マップ（サンプル）
+  description: |
+    建設候補地・地震・活断層を整理したサンプルデータ。
+    範囲抽出・詳細ビューア・写真表示の動作確認用。
+  crs: EPSG:4326
+  photoBase: ./photos/
+view:
+  center: [35.681, 139.767]
+  zoom: 13
+  baseLayer: pale
+  overlays: [afm]
+
+tags:
+  - id: site
+    name: 建設サイト
+    color: "#2e7d32"
+    symbol: building
+    description: 建設候補地・店舗情報
+  - id: quake
+    name: 地震
+    color: "#e53935"
+    symbol: star
+  - id: fault
+    name: 活断層
+    color: "#8e24aa"
+    symbol: fault
+
+features:
+  - id: f001
+    type: point
+    tag: site
+    name: A棟予定地
+    symbol: building
+    coordinates: [35.690, 139.700]
+    properties:
+      用途: 商業施設
+      着工予定: 2027-04
+    note: |
+      地権者と交渉中。地盤調査は未実施。
+    photos:
+      - src: a_site_01.jpg
+        caption: 北側からの全景
+        takenAt: 2026-05-12T10:30:00+09:00
+        location: [35.6901, 139.7002]
+      - src: a_site_02.jpg
+        caption: 接道状況
+
+  - id: f002
+    type: point
+    tag: quake
+    name: 観測点P-12
+    coordinates: [35.675, 139.760]
+    properties:
+      震度: 5強
+      発生日時: 2026-03-02T04:15:00+09:00
+
+  - id: f003
+    type: line
+    tag: fault
+    name: 〇〇断層
+    coordinates:
+      - [35.70, 139.69]
+      - [35.71, 139.72]
+      - [35.72, 139.75]
+    properties:
+      確実度: I
+    note: 都市圏活断層図に基づく概形。
+
+  - id: f004
+    type: polygon
+    tag: quake
+    name: 想定震度6強エリア
+    coordinates:
+      - [[35.68, 139.74], [35.69, 139.78], [35.66, 139.79], [35.65, 139.75]]
+    style:
+      fillOpacity: 0.3
+    note: 暫定の想定範囲。
