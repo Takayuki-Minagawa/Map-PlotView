@@ -1,84 +1,109 @@
-# Map PlotView — 地図プロットツール
+# Map PlotView
 
-地図上にタグ付きの点・線・面をプロットし、YAMLで保存/読込する**サーバ不要の静的Webツール**。
-建設サイト・店舗・地震・活断層などを記号付きでプロットし、矩形で範囲抽出 → 詳細ビューア（写真付き）で確認できる。
+Map PlotViewは、地図上に点・線・面の情報をプロットし、タグや写真、メモと一緒に管理できる静的Webアプリです。
+データはYAMLとして読み込み・保存でき、範囲選択した結果をYAML / GeoJSON / CSVで書き出せます。
 
-> 本ツールは仕様書 兼 技術調査報告を `/goal` として実装したもの。要件 R1–R11 と設計概要は本 README に集約している。
+公開ページ: https://takayuki-minagawa.github.io/Map-PlotView/
+
+## コンセプト
+
+- サーバを用意せず、ブラウザだけで地図プロットを作成・確認する
+- タグ、記号、色で地図上の情報を見分けやすくする
+- YAMLでデータを持ち運び、必要に応じてGeoJSONやCSVへ変換する
+- 現地確認、施設管理、調査地点、候補地、災害・地形情報などを地図上で整理する
+
+## 主な機能
+
+- **地図表示**: 国土地理院タイル、淡色地図、写真、OpenStreetMapを切替
+- **オーバーレイ**: 活断層図を重ねて表示
+- **プロット作成**: 点、線、面を地図上に作図
+- **タグ管理**: タグごとに名称、色、記号を設定し、表示/非表示を切替
+- **詳細表示**: 座標、表示項目、メモ、写真をサイドビューで確認
+- **写真対応**: 写真のサムネイル表示、ライトボックス表示、EXIF情報の取り込み
+- **範囲抽出**: 矩形選択でプロットを抽出し、交差/内包で判定
+- **エクスポート**: 全体はYAML、抽出結果はYAML / GeoJSON / CSVで保存
+- **多言語表示**: アプリUIは日本語を既定とし、英語へ切替可能
+- **簡易マニュアル**: 日本語、中文、英語で表示
+- **テーマ切替**: ライトモード、ダークモードに対応
+- **レスポンシブ対応**: PC、タブレット、スマートフォンで利用可能
 
 ## 使い方
 
-`index.html` をブラウザで開くだけ（ビルド不要）。地図タイルとライブラリはCDN/オンライン取得のため、ネット接続が必要。
+1. 公開ページをブラウザで開きます。
+2. `読込(YAML)`から保存済みデータを読み込みます。初めて使う場合は`サンプル`を選択できます。
+3. `点`、`線`、`面`を選び、地図上にプロットを作成します。
+4. 編集画面で名称、タグ、表示項目、メモ、写真を設定します。
+5. 一覧または地図上のプロットを選ぶと、詳細ビューで内容を確認できます。
+6. `矩形選択`で範囲を指定すると、対象プロットを抽出できます。
+7. `保存(YAML)`で全体を保存し、抽出結果はYAML / GeoJSON / CSVで書き出せます。
 
-```
-open index.html          # macOS（file:// で開ける）
-# サンプル読込で fetch が必要な場合のみ簡易サーバ:
-python3 -m http.server   # → http://localhost:8000/
-```
+## データの扱い
 
-- **読込(YAML)** … 保存済みデータを読み込む（`<input type=file>`）。
-- **サンプル** … `samples/sample.yaml` を読み込む（`file://` では fetch 制限により失敗することがある。その場合は読込ボタンから選択）。
-- **矩形選択** … 地図をドラッグして範囲内のフィーチャを抽出 → 左の「抽出結果」に一覧。判定は交差/内包を切替可。
-- 一覧やプロットをクリック → 右の**詳細ビューア**（座標・表示項目・メモ・写真）を表示。
-- **保存(YAML)** … 全体を保存。抽出結果は YAML / GeoJSON / CSV で書き出し可。
-- **English / 日本語** … アプリ表示を日本語（既定）と英語で切替。
-- **ダーク / ライト** … 端末利用向けにライトモードとダークモードを切替。
-- **マニュアル** … 簡易マニュアルを日本語・中文・英語で表示。
+Map PlotViewは静的Webアプリです。読み込んだYAMLや編集内容は、アプリのサーバへ送信されません。
+地図タイル、ライブラリ、公開ページの配信には外部サービスを利用します。
 
-## 機能と要件（R1–R11）
+- 地図タイル: 国土地理院、OpenStreetMap
+- JavaScript/CSSライブラリ: CDN配信のLeaflet、Leaflet-Geoman、js-yaml、Turf.js、exifr
+- 自動保存: ブラウザの`localStorage`を使用
 
-| 要件 | 内容 | 実装 |
-|------|------|------|
-| R1 | タグ・タグ項目の登録/表示 | `ui.js` タグ管理・凡例・ON/OFF |
-| R2 | 記号付きポイント | `symbols.js` + `mapview.renderFeature` |
-| R3 | 線・面 | `mapview.renderFeature`（polyline/polygon） |
-| R4 | 静的動作（サーバ不要） | classic script + グローバル名前空間 |
-| R5 | アップロード読込 | `FileReader` → `Store.parseYaml` |
-| R6 | YAML（メモ記述可） | `store.js`（js-yaml） |
-| R7/R8 | 拡大移動・高精度地図 | Leaflet + 地理院タイル |
-| R9 | 矩形範囲抽出 | `mapview.startRectangleSelect` + `select.js`（turf） |
-| R10 | 詳細ビューア | `detail.js` |
-| R11 | 写真情報・表示 | `detail.js`（ギャラリ/ライトボックス/exifr） |
+重要なデータを扱う場合は、保存したYAMLファイルを手元で管理してください。
 
-## 構成
-
-```
-index.html            エントリ（CDN: leaflet, geoman, js-yaml, turf, exifr）
-css/style.css
-js/
-  symbols.js   記号(divIcon)定義
-  store.js     YAML⇄内部構造 / 検証 / GeoJSON変換
-  mapview.js   Leaflet初期化 / レイヤ / 描画 / 矩形選択 / ハイライト
-  select.js    範囲抽出（turf 空間判定）
-  detail.js    詳細ビューア / 写真 / ライトボックス / EXIF
-  i18n.js      多言語表示 / 簡易マニュアル / テーマ切替
-  ui.js        サイドバー / タグ / 一覧 / 編集モーダル / エクスポート
-  app.js       状態管理・イベント結線（中心）
-samples/sample.yaml
-favicon.svg
-```
-
-座標は緯度経度（WGS84/EPSG:4326）で保持。地理院タイル/OSM 利用時は**出典明示**が必要。
-
-## データ形式（YAML 抜粋）
+## YAMLデータ例
 
 ```yaml
 version: 2
-view: { center: [35.681, 139.767], zoom: 13, baseLayer: pale, overlays: [afm] }
+view:
+  center: [35.681, 139.767]
+  zoom: 13
+  baseLayer: pale
+  overlays: [afm]
 tags:
-  - { id: site, name: 建設サイト, color: "#2e7d32", symbol: building }
+  - id: site
+    name: 建設サイト
+    color: "#2e7d32"
+    symbol: building
 features:
   - id: f001
-    type: point            # point | line | polygon
+    type: point
     tag: site
     name: A棟予定地
-    coordinates: [35.690, 139.700]   # [緯度, 経度]
-    properties: { 用途: 商業施設 }
+    coordinates: [35.690, 139.700]
+    properties:
+      用途: 商業施設
     note: 地権者と交渉中。
     photos:
-      - { src: a_site_01.jpg, caption: 北側からの全景 }
+      - src: a_site_01.jpg
+        caption: 北側からの全景
 ```
 
-## テスト
+座標は緯度経度（WGS84 / EPSG:4326）で保持します。
 
-純ロジック（parse/validate/GeoJSON変換/範囲抽出）は Node ハーネスで検証（22 ケース）。
-DOM/地図描画は静的レビューで配線・API利用を確認。
+## ファイル構成
+
+```text
+index.html            アプリ本体のエントリ
+favicon.svg           ファビコン
+css/style.css         レイアウト、テーマ、レスポンシブ表示
+js/
+  app.js              アプリ状態、イベント結線、入出力
+  detail.js           詳細ビュー、写真表示、EXIF抽出
+  i18n.js             多言語表示、簡易マニュアル、テーマ切替
+  mapview.js          Leaflet地図、背景、オーバーレイ、作図表示
+  select.js           矩形範囲抽出、距離・面積計測
+  store.js            YAML読込/保存、検証、GeoJSON変換
+  symbols.js          記号定義、地図マーカー
+  ui.js               タグ、一覧、編集モーダル、エクスポート
+samples/sample.yaml   サンプルデータ
+.github/workflows/
+  pages.yml           GitHub Pages公開ワークフロー
+```
+
+## GitHub Pages公開
+
+`main`ブランチへpushされると、GitHub ActionsがJavaScript構文チェックを実行し、成功後にGitHub Pagesへ公開します。
+手動で再公開したい場合は、GitHub Actionsの`Deploy GitHub Pages`ワークフローを`workflow_dispatch`で実行できます。
+
+## ライセンスと出典
+
+地図タイルを利用する際は、画面上に表示される各提供元の出典表示に従ってください。
+OpenStreetMap、国土地理院タイル、その他外部ライブラリの利用条件は、それぞれの提供元ライセンスに従います。
