@@ -205,6 +205,8 @@
       document.removeEventListener('mouseup', onDocUp, true);
       self.map.dragging.enable();
       self.map.getContainer().style.cursor = '';
+      // 未確定（途中キャンセル）の矩形が残っていれば除去
+      if (rect && rect !== self.selectionRect) { self.map.removeLayer(rect); rect = null; }
       start = null;
     }
     // マップコンテナ外でマウスを離したケースの保険

@@ -17,6 +17,8 @@
   var mapview, detail, ui;
   var selectMode = 'intersect';
   var respectHidden = true;
+  var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
+  var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
 
   function tagsArray() { return Array.from(state.tags.values()); }
   function featuresArray() { return Array.from(state.features.values()); }
@@ -198,12 +200,14 @@
       alert('作図ツール(Leaflet-Geoman)が読み込まれていません。');
       return;
     }
+    // 既存の作図/矩形選択セッションを解除してから開始（ハンドラ積み増しを防止）
+    cancelDraw();
+    cancelRectSelect();
     var shape = { point: 'Marker', line: 'Line', polygon: 'Polygon' }[type];
-    mapview.map.pm.enableDraw(shape, { snappable: true });
-    mapview.map.once('pm:create', function (e) {
+    drawCreateHandler = function (e) {
       var coords = geomanToCoords(type, e.layer);
       mapview.map.removeLayer(e.layer); // 一旦削除し内部管理レイヤとして再生成
-      mapview.map.pm.disableDraw();
+      cancelDraw();                     // セッション終了（disableDraw + off）
       var f = {
         id: nextId(type),
         type: type,
@@ -212,11 +216,34 @@
         coordinates: coords,
         properties: {}
       };
-      state.features.set(f.id, f);
+      // 確定前は state に登録せず、プレビュー描画のみ。保存で確定、キャンセルで破棄。
       mapview.renderFeature(f, state.tags.get(f.tag));
-      renderAll();
-      editFeature(f);
-    });
+      ui.openFeatureEditor(f, tagsArray(), { meta: state.meta }, function (nf) {
+        mapview.removeFeature(f.id);     // プレビュー除去
+        state.features.set(nf.id, nf);
+        mapview.renderFeature(nf, state.tags.get(nf.tag));
+        mapview.setFeatureVisible(nf.id, !state.hiddenTags.has(nf.tag));
+        renderAll();
+        if (state.activeFeatureId === nf.id) detail.showDetail(nf, state.tags.get(nf.tag), state.meta);
+        autosave();
+      }, function () {
+        mapview.removeFeature(f.id);     // キャンセル：プレビュー破棄（state未登録）
+      });
+    };
+    mapview.map.on('pm:create', drawCreateHandler);
+    mapview.map.pm.enableDraw(shape, { snappable: true });
+  }
+
+  function cancelDraw() {
+    if (drawCreateHandler && mapview.map.pm) {
+      mapview.map.off('pm:create', drawCreateHandler);
+      mapview.map.pm.disableDraw();
+    }
+    drawCreateHandler = null;
+  }
+
+  function cancelRectSelect() {
+    if (rectCleanup) { rectCleanup(); rectCleanup = null; }
   }
 
   function geomanToCoords(type, layer) {
@@ -249,8 +276,12 @@
 
   /* ---- 矩形範囲抽出（R9） ---- */
   function beginRectSelect() {
+    // 進行中の作図/前回の矩形選択セッションを解除（リスナ積み増し・残留矩形を防止）
+    cancelDraw();
+    cancelRectSelect();
     setStatus('矩形をドラッグして範囲を指定…');
-    mapview.startRectangleSelect(function (rectGeoJSON) {
+    rectCleanup = mapview.startRectangleSelect(function (rectGeoJSON) {
+      rectCleanup = null; // ドラッグ完了でセッション終了（内部cleanupは実行済み）
       state.selection.rect = rectGeoJSON;
       var ids = global.Select.selectInBounds(rectGeoJSON, featuresArray(), {
         mode: selectMode,
@@ -264,6 +295,7 @@
   }
 
   function clearSelection() {
+    cancelRectSelect();
     mapview.clearSelectionRect();
     state.selection = { rect: null, ids: [] };
     ui.renderSelectionList([], tagsById(), state.activeFeatureId);

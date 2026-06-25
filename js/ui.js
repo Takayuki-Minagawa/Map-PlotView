@@ -113,7 +113,7 @@
   };
 
   /* フィーチャ編集モーダル（プロパティ/メモ/写真） */
-  UI.prototype.openFeatureEditor = function (feature, tags, ctx, onSave) {
+  UI.prototype.openFeatureEditor = function (feature, tags, ctx, onSave, onCancel) {
     var isNew = !feature.id;
     var photos = (feature.photos || []).slice();
     var tagOpts = tags.map(function (t) {
@@ -188,7 +188,7 @@
         });
         e.target.value = '';
       });
-    });
+    }, onCancel);
   };
 
   /* ---- エクスポート整形 ---- */
@@ -260,7 +260,7 @@
   }
 
   /* 汎用モーダル。onSubmitがfalseを返すと閉じない。afterRenderで内部結線。 */
-  function modal(title, bodyHtml, onSubmit, afterRender) {
+  function modal(title, bodyHtml, onSubmit, afterRender, onCancel) {
     var back = document.createElement('div');
     back.className = 'mpv-modal';
     back.innerHTML =
@@ -269,7 +269,11 @@
       '<div class="mpv-modal__body">' + bodyHtml + '</div>' +
       '<footer><button type="button" class="mpv-cancel">キャンセル</button>' +
       '<button type="submit" class="mpv-ok">保存</button></footer></form>';
-    function close() { if (back.parentNode) back.parentNode.removeChild(back); }
+    var submitted = false;
+    function close() {
+      if (back.parentNode) back.parentNode.removeChild(back);
+      if (!submitted && onCancel) onCancel();
+    }
     back.querySelector('.mpv-modal__x').addEventListener('click', close);
     back.querySelector('.mpv-cancel').addEventListener('click', close);
     back.addEventListener('click', function (e) { if (e.target === back) close(); });
@@ -277,7 +281,7 @@
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var r = onSubmit(form);
-      if (r !== false) close();
+      if (r !== false) { submitted = true; close(); }
     });
     document.body.appendChild(back);
     if (afterRender) afterRender(back);
