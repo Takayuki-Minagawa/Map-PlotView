@@ -59,6 +59,8 @@
     wireToolbar();
     if (global.I18n) {
       global.I18n.subscribe(function () {
+        syncSystemTagLabels();
+        if (mapview.map && mapview.map.closePopup) mapview.map.closePopup();
         redrawFeatures();
         renderAll();
         if (state.activeFeatureId && state.features.has(state.activeFeatureId)) {
@@ -86,6 +88,7 @@
     state.view = parsed.view;
     state.tags = new Map();
     parsed.tags.forEach(function (t) { state.tags.set(t.id, t); });
+    syncSystemTagLabels();
     state.features = new Map();
     parsed.features.forEach(function (f) { state.features.set(f.id, f); });
     state.hiddenTags = new Set();
@@ -279,6 +282,11 @@
     if (first) return first.id;
     state.tags.set('__uncategorized__', { id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
     return '__uncategorized__';
+  }
+
+  function syncSystemTagLabels() {
+    var tag = state.tags.get('__uncategorized__');
+    if (tag) tag.name = tr('uncategorized');
   }
 
   function nextId(type) {

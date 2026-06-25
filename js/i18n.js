@@ -257,7 +257,9 @@
   };
 
   function t(key, vars) {
-    var text = (M[currentLang] && M[currentLang][key]) || M.ja[key] || key;
+    var dict = M[currentLang] || {};
+    var text = Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] :
+      (Object.prototype.hasOwnProperty.call(M.ja, key) ? M.ja[key] : key);
     if (!vars) return text;
     return text.replace(/\{(\w+)\}/g, function (_, k) {
       return Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : '';
@@ -300,6 +302,8 @@
   function applyTheme() {
     document.documentElement.setAttribute('data-theme', currentTheme);
     document.documentElement.style.colorScheme = currentTheme;
+    var metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) metaTheme.setAttribute('content', currentTheme === 'dark' ? '#0f172a' : '#1f2933');
   }
 
   function renderStatic(root) {
