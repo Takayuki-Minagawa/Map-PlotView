@@ -17,10 +17,11 @@
   <header class="mpv-header">
     <h1>Map PlotView</h1>
     <div class="mpv-io">
-      <button id="btnLoad" data-i18n="loadYaml">読込(YAML)</button>
+      <button id="btnLoad" data-i18n="loadData">読込</button>
       <button id="btnSaveYaml" data-i18n="saveYaml">保存(YAML)</button>
+      <button id="btnSaveGeo" data-i18n="saveGeoJson">保存(GeoJSON)</button>
       <button id="btnLoadSample" data-i18n="sample">サンプル</button>
-      <input type="file" id="fileInput" accept=".yaml,.yml,text/yaml" hidden>
+      <input type="file" id="fileInput" accept=".yaml,.yml,.geojson,.json,text/yaml,application/geo+json,application/json" hidden>
     </div>
     <div class="mpv-settings" aria-label="display settings">
       <button id="btnMapOnlyToggle" data-i18n="mapOnlyOpen" data-i18n-aria="mapOnlyOpen">地図のみ</button>
@@ -94,7 +95,11 @@
       </section>
 
       <section class="mpv-panel">
-        <h2 data-i18n="featureList">プロット一覧</h2>
+        <div class="mpv-panel__head">
+          <h2 data-i18n="featureList">プロット一覧</h2>
+          <button id="btnFitAll" class="mpv-mini" data-i18n="fitAll">全体表示</button>
+        </div>
+        <input type="search" id="featureSearch" class="mpv-search" data-i18n-placeholder="searchPlaceholder" placeholder="検索（名称/ID/タグ）">
         <div id="featureList" class="mpv-list"></div>
       </section>
 

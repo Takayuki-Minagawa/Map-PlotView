@@ -148,6 +148,16 @@
     this.highlightFeature(id);
   };
 
+  /* 表示中の全フィーチャが収まるようにズーム。対象が無ければfalse。 */
+  MapView.prototype.fitAllFeatures = function () {
+    var layers = this.featureGroup.getLayers();
+    if (!layers.length) return false;
+    var b = this.featureGroup.getBounds();
+    if (!b.isValid()) return false;
+    this.map.fitBounds(b.pad(0.15), { maxZoom: 17 });
+    return true;
+  };
+
   MapView.prototype.getView = function () {
     var c = this.map.getCenter();
     return {

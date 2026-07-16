@@ -105,6 +105,7 @@ button.danger { color: #c62828; border-color: #e0a3a3; }
 .mpv-tag__btns button { padding: 1px 5px; font-size: 12px; }
 
 /* 一覧（プロット/抽出結果） */
+.mpv-search { width: 100%; padding: 5px 8px; margin-bottom: 6px; border: 1px solid var(--mpv-border); border-radius: 6px; font: inherit; font-size: 13px; background: var(--mpv-input); color: var(--mpv-text); }
 .mpv-list { display: flex; flex-direction: column; gap: 3px; max-height: 240px; overflow-y: auto; }
 .mpv-row { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "g n" "g m"; gap: 0 8px; align-items: center; padding: 5px 6px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
 .mpv-row:hover { background: var(--mpv-subtle); }

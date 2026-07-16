@@ -12,8 +12,9 @@
     ja: {
       title: 'Map PlotView - 地図プロットツール',
       manualOpen: 'マニュアル',
-      loadYaml: '読込(YAML)',
+      loadData: '読込',
       saveYaml: '保存(YAML)',
+      saveGeoJson: '保存(GeoJSON)',
       sample: 'サンプル',
       statusReady: '',
       layersTitle: '背景 / オーバーレイ',
@@ -38,6 +39,8 @@
       selectionResult: '抽出結果',
       exportSelection: '抽出を書出:',
       featureList: 'プロット一覧',
+      fitAll: '全体表示',
+      searchPlaceholder: '検索（名称/ID/タグ）',
       mapOnlyOpen: '地図のみ',
       mapOnlyClose: 'パネルを表示',
       langToggle: 'English',
@@ -115,14 +118,18 @@
       errPolygonVertex: 'polygon リング[{ring}] 頂点[{index}] が不正です',
       yamlSyntaxError: 'YAML構文エラー: {message}',
       yamlEmptyError: 'YAMLの内容が空、またはオブジェクトではありません',
+      geojsonSyntaxError: 'GeoJSON構文エラー: {message}',
+      geojsonEmptyError: 'GeoJSONにFeatureが含まれていません（FeatureCollectionまたはFeatureが必要）',
+      warningGeoJSONGeometry: 'features[{index}]: 未対応のgeometry "{geomType}" のためスキップ（Point/LineString/Polygonのみ対応）',
       warningFeatureInvalid: 'features[{index}] ({id}): {errors}',
       warningUnknownTag: 'features[{index}] ({id}): タグ "{tag}" が未定義のため「未分類」に変更'
     },
     en: {
       title: 'Map PlotView - Map Plotting Tool',
       manualOpen: 'Manual',
-      loadYaml: 'Load YAML',
+      loadData: 'Load',
       saveYaml: 'Save YAML',
+      saveGeoJson: 'Save GeoJSON',
       sample: 'Sample',
       statusReady: '',
       layersTitle: 'Base / Overlays',
@@ -147,6 +154,8 @@
       selectionResult: 'Results',
       exportSelection: 'Export:',
       featureList: 'Plots',
+      fitAll: 'Fit all',
+      searchPlaceholder: 'Search (name / ID / tag)',
       mapOnlyOpen: 'Map only',
       mapOnlyClose: 'Show panels',
       langToggle: '日本語',
@@ -224,6 +233,9 @@
       errPolygonVertex: 'polygon ring[{ring}] vertex[{index}] is invalid',
       yamlSyntaxError: 'YAML syntax error: {message}',
       yamlEmptyError: 'YAML content is empty or is not an object',
+      geojsonSyntaxError: 'GeoJSON syntax error: {message}',
+      geojsonEmptyError: 'The GeoJSON contains no features (FeatureCollection or Feature required)',
+      warningGeoJSONGeometry: 'features[{index}]: unsupported geometry "{geomType}" skipped (only Point/LineString/Polygon are supported)',
       warningFeatureInvalid: 'features[{index}] ({id}): {errors}',
       warningUnknownTag: 'features[{index}] ({id}): tag "{tag}" is undefined, changed to Uncategorized'
     }
@@ -234,7 +246,7 @@
       label: '日本語',
       title: '簡易マニュアル',
       sections: [
-        ['基本操作', ['「読込(YAML)」で保存済みデータを開きます。', '「サンプル」で付属データを読み込みます。file://で失敗する場合はローカルサーバで開いてください。', '「保存(YAML)」で現在のタグ、プロット、表示位置を保存します。']],
+        ['基本操作', ['「読込」で保存済みデータ（YAML / GeoJSON）を開きます。', '「サンプル」で付属データを読み込みます。file://で失敗する場合はローカルサーバで開いてください。', '「保存(YAML)」で全体を保存します。「保存(GeoJSON)」でGeoJSONとしても書き出せます。']],
         ['プロット作成', ['「点」「線」「面」を選び、地図上で作図します。', '表示された編集画面で名称、タグ、表示項目、メモ、写真を設定して保存します。', '一覧または地図上のプロットを選ぶと詳細を確認できます。']],
         ['範囲抽出', ['「矩形選択」を押して地図上をドラッグします。', '判定は「交差」または「内包」から選択できます。', '抽出結果はYAML、GeoJSON、CSVで書き出せます。']],
         ['表示設定', ['背景地図や活断層図を切り替えられます。', 'タグのチェックを外すと、そのタグのプロットを一時的に非表示にできます。', '右上のボタンで日本語/英語、ライト/ダークを切り替えられます。']]
@@ -244,7 +256,7 @@
       label: '中文',
       title: '简易手册',
       sections: [
-        ['基本操作', ['使用“加载 YAML”打开已保存的数据。', '使用“示例”加载附带数据。如果在 file:// 下失败，请通过本地服务器打开。', '使用“保存 YAML”保存当前标签、标绘对象和地图视图。']],
+        ['基本操作', ['使用“读取”打开已保存的数据（YAML / GeoJSON）。', '使用“示例”加载附带数据。如果在 file:// 下失败，请通过本地服务器打开。', '使用“保存(YAML)”保存全部数据，也可用“保存(GeoJSON)”导出 GeoJSON。']],
         ['创建标绘', ['选择“点”“线”或“面”，然后在地图上绘制。', '在编辑窗口中设置名称、标签、显示项目、备注和照片后保存。', '点击列表或地图上的标绘对象即可查看详细信息。']],
         ['范围提取', ['点击“矩形选择”，然后在地图上拖拽出范围。', '判定方式可选择“相交”或“包含”。', '提取结果可导出为 YAML、GeoJSON 或 CSV。']],
         ['显示设置', ['可以切换底图和活动断层图层。', '取消标签勾选可临时隐藏该标签的标绘对象。', '右上角按钮可切换日语/英语以及亮色/暗色模式。']]
@@ -254,7 +266,7 @@
       label: 'English',
       title: 'Quick Manual',
       sections: [
-        ['Basics', ['Use “Load YAML” to open saved data.', 'Use “Sample” to load the bundled sample. If it fails from file://, open the app through a local server.', 'Use “Save YAML” to save the current tags, plots, and map view.']],
+        ['Basics', ['Use “Load” to open saved data (YAML / GeoJSON).', 'Use “Sample” to load the bundled sample. If it fails from file://, open the app through a local server.', 'Use “Save YAML” to save everything; “Save GeoJSON” exports GeoJSON as well.']],
         ['Creating Plots', ['Choose “Point”, “Line”, or “Polygon”, then draw on the map.', 'Set the name, tag, display fields, notes, and photos in the editor, then save.', 'Select a plot from the list or the map to view its details.']],
         ['Area Extract', ['Press “Rectangle” and drag on the map.', 'Choose either “Intersect” or “Within” for the selection mode.', 'Export results as YAML, GeoJSON, or CSV.']],
         ['Display Settings', ['Switch base maps and the active fault overlay as needed.', 'Uncheck a tag to temporarily hide its plots.', 'Use the top-right buttons to switch Japanese/English and Light/Dark modes.']]
@@ -321,6 +333,9 @@
     });
     root.querySelectorAll('[data-i18n-title]').forEach(function (el) {
       el.title = t(el.getAttribute('data-i18n-title'));
+    });
+    root.querySelectorAll('[data-i18n-placeholder]').forEach(function (el) {
+      el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder')));
     });
     root.querySelectorAll('[data-i18n-aria]').forEach(function (el) {
       el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));

@@ -110,6 +110,82 @@
     return { meta: meta, view: view, tags: tags, features: features, warnings: warnings };
   }
 
+  /* GeoJSONインポート時にタグへ割り当てる色 */
+  var TAG_PALETTE = ['#2e7d32', '#1565c0', '#ef6c00', '#6a1b9a', '#c62828', '#00838f', '#9e9d24', '#4e342e'];
+
+  /* GeoJSONテキスト → 内部構造。parseYamlと同じ形 {meta, view, tags, features, warnings} を返す。
+   * viewはnull（現在の表示位置を維持）。properties.tag からタグを自動生成する。 */
+  function parseGeoJSON(text) {
+    var doc;
+    try {
+      doc = JSON.parse(text);
+    } catch (e) {
+      throw new Error(tr('geojsonSyntaxError', { message: e.message }));
+    }
+    var rawFeatures = null;
+    if (doc && doc.type === 'FeatureCollection') rawFeatures = Array.isArray(doc.features) ? doc.features : [];
+    else if (doc && doc.type === 'Feature') rawFeatures = [doc];
+    if (!rawFeatures || !rawFeatures.length) {
+      throw new Error(tr('geojsonEmptyError'));
+    }
+
+    var warnings = [];
+    var features = [];
+    var usedIds = {};
+    rawFeatures.forEach(function (gj) {
+      if (gj && gj.id != null) usedIds[gj.id] = true;
+    });
+
+    rawFeatures.forEach(function (gj, idx) {
+      if (!gj || typeof gj !== 'object') {
+        warnings.push(tr('warningFeatureInvalid', { index: idx, id: '', errors: tr('errFeatureNotObject') }));
+        return;
+      }
+      var f = fromGeoJSON(gj);
+      if (!f.type) {
+        warnings.push(tr('warningGeoJSONGeometry', { index: idx, geomType: (gj.geometry && gj.geometry.type) || '(none)' }));
+        return;
+      }
+      if (!f.tag) f.tag = '__uncategorized__';
+      if (!f.id) {
+        f.id = nextFreeId(f.type, usedIds);
+        usedIds[f.id] = true;
+      }
+      var v = validateFeature(f);
+      if (!v.ok) {
+        warnings.push(tr('warningFeatureInvalid', { index: idx, id: f.id, errors: v.errors.join(' / ') }));
+        return;
+      }
+      features.push(f);
+    });
+
+    // features に現れたタグIDからタグ定義を自動生成
+    var tags = [];
+    var seenTags = {};
+    features.forEach(function (f) {
+      if (seenTags[f.tag]) return;
+      seenTags[f.tag] = true;
+      if (f.tag === '__uncategorized__') {
+        tags.push({ id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
+      } else {
+        tags.push({ id: f.tag, name: f.tag, color: TAG_PALETTE[(tags.length) % TAG_PALETTE.length] });
+      }
+    });
+
+    return { meta: {}, view: null, tags: tags, features: features, warnings: warnings };
+  }
+
+  /* type別プレフィクス(p/l/g)＋連番で、usedIdsと衝突しないIDを返す */
+  function nextFreeId(type, usedIds) {
+    var p = (type === 'point' ? 'p' : type === 'line' ? 'l' : 'g');
+    var n = 1, id;
+    do {
+      id = p + (n < 100 ? ('00' + n).slice(-3) : String(n));
+      n++;
+    } while (usedIds[id]);
+    return id;
+  }
+
   /* 内部構造（state）→ YAMLテキスト */
   function dumpYaml(state) {
     var out = {
@@ -189,6 +265,7 @@
     DEFAULT_VIEW: DEFAULT_VIEW,
     validateFeature: validateFeature,
     parseYaml: parseYaml,
+    parseGeoJSON: parseGeoJSON,
     dumpYaml: dumpYaml,
     toGeoJSON: toGeoJSON,
     fromGeoJSON: fromGeoJSON,

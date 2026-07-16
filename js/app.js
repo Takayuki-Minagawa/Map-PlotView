@@ -18,6 +18,7 @@
   var selectMode = 'intersect';
   var respectHidden = true;
   var mapOnlyMode = false;
+  var searchQuery = '';
   var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
   var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
   var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
@@ -79,13 +80,26 @@
 
   /* ---- 入出力 ---- */
   function loadFromYamlText(text) {
+    loadFromParser(global.Store.parseYaml, text);
+  }
+
+  function loadFromGeoJSONText(text) {
+    loadFromParser(global.Store.parseGeoJSON, text);
+  }
+
+  function loadFromParser(parser, text) {
     var parsed;
     try {
-      parsed = global.Store.parseYaml(text);
+      parsed = parser(text);
     } catch (e) {
       alert(tr('loadError', { message: e.message }));
       return;
     }
+    applyParsed(parsed);
+  }
+
+  /* パース済みデータ(state相当)を反映する。parsed.viewがnullなら現在の表示位置を維持。 */
+  function applyParsed(parsed) {
     state.meta = parsed.meta || {};
     state.view = parsed.view;
     state.tags = new Map();
@@ -122,6 +136,10 @@
     return global.Store.dumpYaml(snap);
   }
 
+  function exportGeoJSON(features) {
+    return JSON.stringify(global.UI.toGeoJSONCollection(features || featuresArray()), null, 2);
+  }
+
   function download(filename, text, mime) {
     var blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
     var a = document.createElement('a');
@@ -136,6 +154,20 @@
     return state.selection.ids.map(function (id) { return state.features.get(id); }).filter(Boolean);
   }
 
+  /* 検索クエリに一致するフィーチャ（名称/ID/タグ名/タグID、部分一致・大小無視） */
+  function filteredFeatures() {
+    var q = searchQuery.trim().toLowerCase();
+    if (!q) return featuresArray();
+    var byId = tagsById();
+    return featuresArray().filter(function (f) {
+      var tag = byId[f.tag];
+      return (f.name || '').toLowerCase().indexOf(q) !== -1 ||
+        (f.id || '').toLowerCase().indexOf(q) !== -1 ||
+        (f.tag || '').toLowerCase().indexOf(q) !== -1 ||
+        (tag && (tag.name || '').toLowerCase().indexOf(q) !== -1);
+    });
+  }
+
   /* ---- 描画 ---- */
   function redrawFeatures() {
     mapview.clearFeatures();
@@ -148,7 +180,7 @@
 
   function renderAll() {
     ui.renderTagList(tagsArray(), state.hiddenTags);
-    ui.renderFeatureList(featuresArray(), tagsById(), state.activeFeatureId);
+    ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
     ui.renderSelectionList(selectionFeatures(), tagsById(), state.activeFeatureId);
   }
 
@@ -159,7 +191,7 @@
     state.activeFeatureId = id;
     detail.showDetail(f, state.tags.get(f.tag), state.meta);
     mapview.focusFeature(id);
-    ui.renderFeatureList(featuresArray(), tagsById(), id);
+    ui.renderFeatureList(filteredFeatures(), tagsById(), id);
     ui.renderSelectionList(selectionFeatures(), tagsById(), id);
   }
 
@@ -336,12 +368,17 @@
     document.getElementById('fileInput').addEventListener('change', function (e) {
       var file = e.target.files[0];
       if (!file) return;
+      var isGeoJSON = /\.(geojson|json)$/i.test(file.name);
       var reader = new FileReader();
-      reader.onload = function () { loadFromYamlText(reader.result); };
+      reader.onload = function () {
+        if (isGeoJSON) loadFromGeoJSONText(reader.result);
+        else loadFromYamlText(reader.result);
+      };
       reader.readAsText(file);
       e.target.value = '';
     });
     on('btnSaveYaml', 'click', function () { download('map-data.yaml', exportYaml(), 'text/yaml;charset=utf-8'); });
+    on('btnSaveGeo', 'click', function () { download('map-data.geojson', exportGeoJSON(), 'application/geo+json'); });
     on('btnLoadSample', 'click', loadSample);
     on('btnMapOnlyToggle', 'click', function () { setMapOnlyMode(!mapOnlyMode); });
     on('btnMapOnlyRestore', 'click', function () { setMapOnlyMode(false); });
@@ -363,7 +400,14 @@
       download('selection.geojson', JSON.stringify(global.UI.toGeoJSONCollection(selectionFeatures()), null, 2), 'application/geo+json');
     });
     on('btnExportSelCsv', 'click', function () {
-      download('selection.csv', global.UI.toCSV(selectionFeatures(), tagsById()), 'text/csv;charset=utf-8');
+      // BOM付与でExcelの文字化けを防ぐ
+      download('selection.csv', '\ufeff' + global.UI.toCSV(selectionFeatures(), tagsById()), 'text/csv;charset=utf-8');
+    });
+
+    on('btnFitAll', 'click', function () { mapview.fitAllFeatures(); });
+    on('featureSearch', 'input', function (e) {
+      searchQuery = e.target.value;
+      ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
     });
 
     // 背景レイヤ・オーバーレイ
@@ -375,8 +419,11 @@
     });
 
     document.addEventListener('keydown', function (e) {
-      if (document.querySelector('.mpv-modal')) return;
-      if (e.key === 'Escape' && mapOnlyMode) setMapOnlyMode(false);
+      if (e.key !== 'Escape') return;
+      if (document.querySelector('.mpv-modal')) return; // モーダルは自身で処理
+      if (drawCreateHandler) { cancelDraw(); setStatus(''); return; }
+      if (rectCleanup) { cancelRectSelect(); setStatus(''); return; }
+      if (mapOnlyMode) setMapOnlyMode(false);
     });
     syncMapOnlyControls();
   }
