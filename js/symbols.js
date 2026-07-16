@@ -38,7 +38,7 @@
     });
   }
 
-  var escapeHtml = global.Util.escapeHtml;
+  function escapeHtml(s) { return global.Util.escapeHtml(s); }
   var escapeAttr = escapeHtml;
 
   global.Symbols = {
