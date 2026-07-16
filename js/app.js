@@ -161,10 +161,11 @@
     var byId = tagsById();
     return featuresArray().filter(function (f) {
       var tag = byId[f.tag];
-      return (f.name || '').toLowerCase().indexOf(q) !== -1 ||
-        (f.id || '').toLowerCase().indexOf(q) !== -1 ||
-        (f.tag || '').toLowerCase().indexOf(q) !== -1 ||
-        (tag && (tag.name || '').toLowerCase().indexOf(q) !== -1);
+      // YAML由来の数値ID等に備えStringで正規化
+      return String(f.name || '').toLowerCase().indexOf(q) !== -1 ||
+        String(f.id || '').toLowerCase().indexOf(q) !== -1 ||
+        String(f.tag || '').toLowerCase().indexOf(q) !== -1 ||
+        (tag && String(tag.name || '').toLowerCase().indexOf(q) !== -1);
     });
   }
 
@@ -420,7 +421,7 @@
 
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape') return;
-      if (document.querySelector('.mpv-modal')) return; // モーダルは自身で処理
+      if (document.querySelector('.mpv-modal')) return; // モーダル表示中は干渉しない
       if (drawCreateHandler) { cancelDraw(); setStatus(''); return; }
       if (rectCleanup) { cancelRectSelect(); setStatus(''); return; }
       if (mapOnlyMode) setMapOnlyMode(false);

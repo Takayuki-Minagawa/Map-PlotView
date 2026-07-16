@@ -136,26 +136,40 @@
       if (gj && gj.id != null) usedIds[gj.id] = true;
     });
 
+    var assignedIds = {};
     rawFeatures.forEach(function (gj, idx) {
       if (!gj || typeof gj !== 'object') {
         warnings.push(tr('warningFeatureInvalid', { index: idx, id: '', errors: tr('errFeatureNotObject') }));
         return;
       }
-      var f = fromGeoJSON(gj);
+      var f;
+      try {
+        f = fromGeoJSON(gj);
+      } catch (e) {
+        // 座標欠落など変換不能なFeatureは警告してスキップ（ファイル全体は生かす）
+        warnings.push(tr('warningFeatureInvalid', { index: idx, id: gj.id != null ? gj.id : '', errors: e.message }));
+        return;
+      }
       if (!f.type) {
         warnings.push(tr('warningGeoJSONGeometry', { index: idx, geomType: (gj.geometry && gj.geometry.type) || '(none)' }));
         return;
       }
       if (!f.tag) f.tag = '__uncategorized__';
-      if (!f.id) {
+      if (f.id == null || f.id === '') {
         f.id = nextFreeId(f.type, usedIds);
         usedIds[f.id] = true;
+      } else if (assignedIds[f.id]) {
+        var dup = f.id;
+        f.id = nextFreeId(f.type, usedIds);
+        usedIds[f.id] = true;
+        warnings.push(tr('warningDuplicateId', { index: idx, id: dup, newId: f.id }));
       }
       var v = validateFeature(f);
       if (!v.ok) {
         warnings.push(tr('warningFeatureInvalid', { index: idx, id: f.id, errors: v.errors.join(' / ') }));
         return;
       }
+      assignedIds[f.id] = true;
       features.push(f);
     });
 
@@ -236,12 +250,18 @@
   /* GeoJSON Feature → 内部フィーチャ（[経度,緯度]→[緯度,経度]） */
   function fromGeoJSON(gj, meta) {
     var g = gj.geometry || {};
-    var f = { id: gj.id || (gj.properties && gj.properties.id), name: (gj.properties && gj.properties.name) || '', properties: {} };
+    var rawId = gj.id != null ? gj.id : (gj.properties && gj.properties.id);
+    var f = {
+      // 数値ID/タグはMapキーや検索で文字列として扱うため正規化する
+      id: rawId != null ? String(rawId) : undefined,
+      name: (gj.properties && gj.properties.name) || '',
+      properties: {}
+    };
     if (gj.properties) {
       Object.keys(gj.properties).forEach(function (k) {
         if (['id', 'name', 'tag', '_type'].indexOf(k) === -1) f.properties[k] = gj.properties[k];
       });
-      f.tag = gj.properties.tag || '__uncategorized__';
+      f.tag = gj.properties.tag != null && gj.properties.tag !== '' ? String(gj.properties.tag) : '__uncategorized__';
     }
     if (g.type === 'Point') {
       f.type = 'point';

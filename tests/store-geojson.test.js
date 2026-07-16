@@ -99,6 +99,48 @@ test('parseGeoJSON: 自動採番は既存IDを避ける', () => {
   assert.equal(ids[1], 'p002', 'p001を避けて採番');
 });
 
+test('parseGeoJSON: 数値のid/tagは文字列へ正規化される', () => {
+  const Store = newStore();
+  const doc = Store.parseGeoJSON(fc([
+    { type: 'Feature', id: 7, properties: { tag: 123 }, geometry: { type: 'Point', coordinates: [139, 35] } }
+  ]));
+  assert.equal(doc.features[0].id, '7');
+  assert.equal(doc.features[0].tag, '123');
+  assert.equal(doc.tags[0].id, '123');
+});
+
+test('parseGeoJSON: id=0 も有効なIDとして保持される', () => {
+  const Store = newStore();
+  const doc = Store.parseGeoJSON(fc([
+    { type: 'Feature', id: 0, geometry: { type: 'Point', coordinates: [139, 35] } }
+  ]));
+  assert.equal(doc.features[0].id, '0');
+});
+
+test('parseGeoJSON: 座標が壊れたFeatureは警告スキップし他は読み込む', () => {
+  const Store = newStore();
+  const doc = Store.parseGeoJSON(fc([
+    { type: 'Feature', geometry: { type: 'Point' } },                               // coordinates欠落
+    { type: 'Feature', geometry: { type: 'LineString', coordinates: null } },      // null座標
+    { type: 'Feature', geometry: { type: 'Polygon', coordinates: ['broken'] } },   // 非配列リング
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [139, 35] } }
+  ]));
+  assert.equal(doc.features.length, 1, '正常な1件だけ読み込まれる');
+  assert.equal(doc.warnings.length, 3);
+});
+
+test('parseGeoJSON: ID重複は警告つきで再採番される', () => {
+  const Store = newStore();
+  const doc = Store.parseGeoJSON(fc([
+    { type: 'Feature', id: 'a', geometry: { type: 'Point', coordinates: [139, 35] } },
+    { type: 'Feature', id: 'a', geometry: { type: 'Point', coordinates: [139.1, 35.1] } }
+  ]));
+  assert.equal(doc.features.length, 2);
+  assert.equal(doc.features[0].id, 'a');
+  assert.notEqual(doc.features[1].id, 'a');
+  assert.equal(doc.warnings.length, 1);
+});
+
 test('parseGeoJSON: 構文エラー・Feature無しはthrowする', () => {
   const Store = newStore();
   assert.throws(() => Store.parseGeoJSON('{invalid'));

@@ -121,6 +121,7 @@
       geojsonSyntaxError: 'GeoJSON構文エラー: {message}',
       geojsonEmptyError: 'GeoJSONにFeatureが含まれていません（FeatureCollectionまたはFeatureが必要）',
       warningGeoJSONGeometry: 'features[{index}]: 未対応のgeometry "{geomType}" のためスキップ（Point/LineString/Polygonのみ対応）',
+      warningDuplicateId: 'features[{index}]: ID "{id}" が重複しているため "{newId}" に変更',
       warningFeatureInvalid: 'features[{index}] ({id}): {errors}',
       warningUnknownTag: 'features[{index}] ({id}): タグ "{tag}" が未定義のため「未分類」に変更'
     },
@@ -236,6 +237,7 @@
       geojsonSyntaxError: 'GeoJSON syntax error: {message}',
       geojsonEmptyError: 'The GeoJSON contains no features (FeatureCollection or Feature required)',
       warningGeoJSONGeometry: 'features[{index}]: unsupported geometry "{geomType}" skipped (only Point/LineString/Polygon are supported)',
+      warningDuplicateId: 'features[{index}]: duplicate ID "{id}" renamed to "{newId}"',
       warningFeatureInvalid: 'features[{index}] ({id}): {errors}',
       warningUnknownTag: 'features[{index}] ({id}): tag "{tag}" is undefined, changed to Uncategorized'
     }
