@@ -33,6 +33,12 @@ jobs:
             node --check "$file"
           done
 
+      - name: Install dev dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
   deploy:
     needs: validate
     runs-on: ubuntu-latest
