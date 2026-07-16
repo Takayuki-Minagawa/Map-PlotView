@@ -109,8 +109,7 @@
         description: form.description.value
       };
       if (!t.id) { alert(tr('idRequired')); return false; }
-      onSave(t, isNew);
-      return true;
+      return onSave(t, isNew) !== false; // 保存側が拒否(false)したらモーダルを維持
     });
   };
 
@@ -203,12 +202,12 @@
         var first = f.type === 'line' ? f.coordinates[0] : f.coordinates[0][0];
         lat = first[0]; lng = first[1];
       }
-      rows.push([f.id, f.name || '', f.tag || '', f.type, lat, lng, (f.note || '').replace(/\n/g, ' ')]);
+      rows.push([f.id, f.name || '', f.tag || '', f.type, lat, lng, (f.note || '').replace(/\r?\n/g, ' ')]);
     });
     return rows.map(function (r) {
       return r.map(function (c) {
         var s = String(c == null ? '' : c);
-        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+        return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
       }).join(',');
     }).join('\n');
   }
@@ -255,11 +254,7 @@
     return tr('pointsCount', { count: n });
   }
 
-  function formatVal(v) {
-    if (v == null) return '';
-    if (typeof v === 'object') return JSON.stringify(v);
-    return String(v);
-  }
+  var formatVal = function (v) { return global.Util.formatVal(v); };
 
   /* 汎用モーダル。onSubmitがfalseを返すと閉じない。afterRenderで内部結線。 */
   function modal(title, bodyHtml, onSubmit, afterRender, onCancel) {

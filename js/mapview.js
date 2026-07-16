@@ -246,7 +246,7 @@
     return '<div class="mpv-popup"><b>' + name + '</b><br><small>' + tagName + ' / ' + global.Symbols.escapeHtml(typeLabel) + '</small></div>';
   }
 
-  function round(n) { return Math.round(n * 1e6) / 1e6; }
+  function round(n) { return global.Util.round(n); }
 
   global.MapView = MapView;
   global.MapView.BASE_DEFS = BASE_DEFS;

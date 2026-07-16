@@ -172,14 +172,10 @@
     return base + src;
   }
 
-  function formatVal(v) {
-    if (v == null) return '';
-    if (typeof v === 'object') return JSON.stringify(v);
-    return String(v);
-  }
+  var formatVal = function (v) { return global.Util.formatVal(v); };
 
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-  function round(n) { return Math.round(n * 1e7) / 1e7; }
+  function round(n) { return global.Util.round(n, 7); }  // EXIF GPSは7桁精度
 
   global.Detail = Detail;
   global.Detail.extractExif = extractExif;

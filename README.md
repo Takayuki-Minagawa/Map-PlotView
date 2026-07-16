@@ -93,7 +93,9 @@ js/
   store.js            YAML読込/保存、検証、GeoJSON変換
   symbols.js          記号定義、地図マーカー
   ui.js               タグ、一覧、編集モーダル、エクスポート
+  util.js             共通ヘルパ（エスケープ、整形、丸め）
 samples/sample.yaml   サンプルデータ
+tests/                ユニットテスト（node --test）
 .github/workflows/
   pages.yml           GitHub Pages公開ワークフロー
 ```

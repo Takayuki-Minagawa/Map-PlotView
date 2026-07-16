@@ -66,6 +66,7 @@
       addTagTitle: 'タグを追加',
       editTagTitle: 'タグを編集',
       idRequired: 'IDは必須です',
+      tagIdExists: 'ID "{id}" のタグは既に存在します',
       fieldId: 'ID',
       fieldName: '名称',
       fieldColor: '色',
@@ -174,6 +175,7 @@
       addTagTitle: 'Add tag',
       editTagTitle: 'Edit tag',
       idRequired: 'ID is required',
+      tagIdExists: 'A tag with ID "{id}" already exists',
       fieldId: 'ID',
       fieldName: 'Name',
       fieldColor: 'Color',
@@ -387,9 +389,7 @@
     try { localStorage.setItem(key, value); } catch (e) { /* ignore */ }
   }
   function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
-    });
+    return global.Util.escapeHtml(s == null ? '' : s);
   }
 
   global.I18n = {

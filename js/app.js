@@ -174,6 +174,10 @@
   }
 
   function saveTag(tag, isNew) {
+    if (isNew && state.tags.has(tag.id)) {
+      alert(tr('tagIdExists', { id: tag.id }));
+      return false; // モーダルを閉じずに再入力へ
+    }
     state.tags.set(tag.id, tag);
     redrawFeatures();
     renderAll();
@@ -183,25 +187,29 @@
   function deleteTag(tagId) {
     if (!confirm(tr('deleteTagConfirm', { id: tagId }))) return;
     state.tags.delete(tagId);
-    if (!state.tags.has('__uncategorized__')) {
+    var orphaned = featuresArray().filter(function (f) { return f.tag === tagId; });
+    if (orphaned.length && !state.tags.has('__uncategorized__')) {
       state.tags.set('__uncategorized__', { id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
     }
-    featuresArray().forEach(function (f) { if (f.tag === tagId) f.tag = '__uncategorized__'; });
+    orphaned.forEach(function (f) { f.tag = '__uncategorized__'; });
     redrawFeatures();
     renderAll();
     autosave();
   }
 
+  /* フィーチャの保存確定：state登録・再描画・詳細更新・自動退避 */
+  function commitFeature(nf) {
+    state.features.set(nf.id, nf);
+    mapview.removeFeature(nf.id);
+    mapview.renderFeature(nf, state.tags.get(nf.tag));
+    mapview.setFeatureVisible(nf.id, !state.hiddenTags.has(nf.tag));
+    renderAll();
+    if (state.activeFeatureId === nf.id) detail.showDetail(nf, state.tags.get(nf.tag), state.meta);
+    autosave();
+  }
+
   function editFeature(f) {
-    ui.openFeatureEditor(f, tagsArray(), { meta: state.meta }, function (nf) {
-      state.features.set(nf.id, nf);
-      mapview.removeFeature(nf.id);
-      mapview.renderFeature(nf, state.tags.get(nf.tag));
-      mapview.setFeatureVisible(nf.id, !state.hiddenTags.has(nf.tag));
-      renderAll();
-      if (state.activeFeatureId === nf.id) detail.showDetail(nf, state.tags.get(nf.tag), state.meta);
-      autosave();
-    });
+    ui.openFeatureEditor(f, tagsArray(), { meta: state.meta }, commitFeature);
   }
 
   function deleteFeature(id) {
@@ -239,13 +247,8 @@
       // 確定前は state に登録せず、プレビュー描画のみ。保存で確定、キャンセルで破棄。
       mapview.renderFeature(f, state.tags.get(f.tag));
       ui.openFeatureEditor(f, tagsArray(), { meta: state.meta }, function (nf) {
-        mapview.removeFeature(f.id);     // プレビュー除去
-        state.features.set(nf.id, nf);
-        mapview.renderFeature(nf, state.tags.get(nf.tag));
-        mapview.setFeatureVisible(nf.id, !state.hiddenTags.has(nf.tag));
-        renderAll();
-        if (state.activeFeatureId === nf.id) detail.showDetail(nf, state.tags.get(nf.tag), state.meta);
-        autosave();
+        mapview.removeFeature(f.id);     // プレビュー除去（IDが変更された場合に備え元IDで）
+        commitFeature(nf);
       }, function () {
         mapview.removeFeature(f.id);     // キャンセル：プレビュー破棄（state未登録）
       });
@@ -458,7 +461,7 @@
     var el = document.getElementById('status');
     if (el) el.textContent = msg || '';
   }
-  function round(n) { return Math.round(n * 1e6) / 1e6; }
+  function round(n) { return global.Util.round(n); }
 
   // expose for debugging/tests
   global.App = {

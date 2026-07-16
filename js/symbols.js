@@ -38,17 +38,13 @@
     });
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function (ch) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
-    });
-  }
-  function escapeAttr(s) { return escapeHtml(s); }
+  var escapeHtml = global.Util.escapeHtml;
+  var escapeAttr = escapeHtml;
 
   global.Symbols = {
     GLYPHS: GLYPHS,
     glyphFor: glyphFor,
     divIcon: divIcon,
-    escapeHtml: escapeHtml
+    escapeHtml: escapeHtml  // 互換維持のためUtilを再公開
   };
 })(typeof window !== 'undefined' ? window : this);

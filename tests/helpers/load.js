@@ -6,9 +6,12 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-/* 疑似グローバル(window相当)を作る。overridesでjsyaml等を注入できる。 */
+/* 疑似グローバル(window相当)を作る。overridesでjsyaml等を注入できる。
+ * util.js は全モジュールの前提のため常に読み込む。 */
 function createSandbox(overrides) {
-  return Object.assign({}, overrides);
+  const sandbox = Object.assign({}, overrides);
+  loadScript('util.js', sandbox);
+  return sandbox;
 }
 
 /* js/<name> を読み、sandbox を window として評価する。

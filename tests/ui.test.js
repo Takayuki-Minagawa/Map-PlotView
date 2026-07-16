@@ -25,6 +25,14 @@ test('toCSV: 点の座標・カンマや引用符のエスケープ・改行の�
   assert.equal(lines[2], 'l1,L,road,line,35,139,', '線は先頭頂点を代表点にする');
 });
 
+test('toCSV: CRLF改行のメモも1行に整形される', () => {
+  const { UI } = newUI();
+  const csv = UI.toCSV([
+    { id: 'p1', type: 'point', tag: 't', name: 'A', coordinates: [35, 139], note: 'a\r\nb' }
+  ], {});
+  assert.equal(csv.split('\n')[1], 'p1,A,t,point,35,139,a b');
+});
+
 test('toGeoJSONCollection: FeatureCollectionを生成する', () => {
   const { UI } = newUI();
   const fc = UI.toGeoJSONCollection([
