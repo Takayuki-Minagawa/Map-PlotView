@@ -54,6 +54,24 @@ test('selectInBounds: respectHidden=false なら非表示でも対象になる',
   assert.deepEqual(ids.sort(), ['in', 'line-in']);
 });
 
+test('selectInBounds: polygon もフォールバックで抽出できる（頂点がbbox内）', () => {
+  const { Select } = newSelect();
+  const polys = [
+    { id: 'poly-in', type: 'polygon', tag: 'c', coordinates: [[[35.4, 139.4], [35.6, 139.4], [35.6, 139.6]]] },
+    { id: 'poly-out', type: 'polygon', tag: 'c', coordinates: [[[41, 146], [42, 146], [42, 147]]] }
+  ];
+  const ids = Select.selectInBounds(rect(139, 35, 140, 36), polys, {});
+  assert.deepEqual(ids, ['poly-in']);
+});
+
+test('selectInBounds: 既知の制限 — 両端点がbbox外で横切る線はフォールバックでは取れない', () => {
+  const { Select } = newSelect();
+  // 線分は矩形を横断するが、頂点はどちらもbbox外（turfがあれば intersect で拾える）
+  const crossing = [{ id: 'cross', type: 'line', tag: 'c', coordinates: [[35.5, 138.5], [35.5, 140.5]] }];
+  const ids = Select.selectInBounds(rect(139, 35, 140, 36), crossing, {});
+  assert.deepEqual(ids, [], 'この挙動を変える場合はこのテストを更新する');
+});
+
 test('measure: turf不在では空オブジェクトを返す', () => {
   const { Select } = newSelect();
   assert.deepEqual(Select.measure({ id: 'l', type: 'line', coordinates: [[35, 139], [36, 140]] }), {});

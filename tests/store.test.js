@@ -31,6 +31,13 @@ test('validateFeature: 不正な入力を拒否する', () => {
   assert.equal(Store.validateFeature({ id: 'x', type: 'polygon', coordinates: [[[35, 139], [36, 139]]] }).ok, false, 'リング頂点不足');
 });
 
+test('validateFeature: 境界値と型を厳密に扱う', () => {
+  const Store = newStore();
+  assert.equal(Store.validateFeature({ id: 'x', type: 'point', coordinates: [90, 180] }).ok, true, '境界値は有効');
+  assert.equal(Store.validateFeature({ id: 'x', type: 'point', coordinates: [-90, -180] }).ok, true);
+  assert.equal(Store.validateFeature({ id: 'x', type: 'point', coordinates: ['35', '139'] }).ok, false, '文字列座標は拒否');
+});
+
 test('parseYaml: 正常なドキュメントを読み込む', () => {
   const Store = newStore();
   const doc = Store.parseYaml([
@@ -56,6 +63,17 @@ test('parseYaml: 未定義タグは未分類へ変更し警告を出す', () => 
   assert.equal(doc.features[0].tag, '__uncategorized__');
   assert.equal(doc.warnings.length, 1);
   assert.ok(doc.tags.some(t => t.id === '__uncategorized__'), '未分類タグが自動追加される');
+});
+
+test('parseYaml: タグ未指定のフィーチャは警告なしで未分類になる', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'features:',
+    '  - { id: f1, type: point, coordinates: [35, 139] }'
+  ].join('\n'));
+  assert.equal(doc.features[0].tag, '__uncategorized__');
+  assert.equal(doc.warnings.length, 0);
+  assert.ok(doc.tags.some(t => t.id === '__uncategorized__'));
 });
 
 test('parseYaml: 不正フィーチャはスキップして警告を出す', () => {
@@ -117,6 +135,26 @@ test('fromGeoJSON: toGeoJSONとの往復で内部表現へ戻る', () => {
   assert.equal(back.name, 'Area');
   assert.deepEqual(back.coordinates, orig.coordinates, '閉じたリングが開いたリングへ戻る');
   assert.deepEqual(back.properties, { memo: 'x' }, '内部キーはpropertiesから除外');
+});
+
+test('toGeoJSON: 既に閉じたリングを二重に閉じない', () => {
+  const Store = newStore();
+  const poly = Store.toGeoJSON({
+    id: 'g', type: 'polygon', tag: 't',
+    coordinates: [[[35, 139], [36, 139], [36, 140], [35, 139]]]
+  });
+  assert.equal(poly.geometry.coordinates[0].length, 4);
+});
+
+test('fromGeoJSON: properties 無しの Feature でも安全に変換する', () => {
+  const Store = newStore();
+  const f = Store.fromGeoJSON({
+    type: 'Feature', id: 'p9',
+    geometry: { type: 'Point', coordinates: [139, 35] }
+  });
+  assert.equal(f.id, 'p9');
+  assert.equal(f.type, 'point');
+  assert.deepEqual(f.coordinates, [35, 139]);
 });
 
 test('fromGeoJSON: line の座標往復', () => {
