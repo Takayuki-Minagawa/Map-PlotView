@@ -141,6 +141,18 @@ test('parseGeoJSON: ID重複は警告つきで再採番される', () => {
   assert.equal(doc.warnings.length, 1);
 });
 
+test('parseGeoJSON: properties.id 由来のIDも自動採番の予約対象になる', () => {
+  const Store = newStore();
+  const doc = Store.parseGeoJSON(fc([
+    { type: 'Feature', properties: { id: 'p001' }, geometry: { type: 'Point', coordinates: [139, 35] } },
+    { type: 'Feature', geometry: { type: 'Point', coordinates: [139.1, 35.1] } } // IDなし
+  ]));
+  const ids = doc.features.map(f => f.id);
+  assert.equal(ids[0], 'p001');
+  assert.notEqual(ids[1], 'p001', 'properties.id と衝突しない');
+  assert.equal(new Set(ids).size, 2);
+});
+
 test('parseGeoJSON: 構文エラー・Feature無しはthrowする', () => {
   const Store = newStore();
   assert.throws(() => Store.parseGeoJSON('{invalid'));

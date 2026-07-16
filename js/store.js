@@ -133,7 +133,9 @@
     var features = [];
     var usedIds = {};
     rawFeatures.forEach(function (gj) {
-      if (gj && gj.id != null) usedIds[gj.id] = true;
+      if (!gj) return;
+      if (gj.id != null) usedIds[String(gj.id)] = true;
+      if (gj.properties && gj.properties.id != null) usedIds[String(gj.properties.id)] = true;
     });
 
     var assignedIds = {};
