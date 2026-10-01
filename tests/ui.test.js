@@ -42,3 +42,28 @@ test('toGeoJSONCollection: FeatureCollectionを生成する', () => {
   assert.equal(fc.features.length, 1);
   assert.deepEqual(fc.features[0].geometry.coordinates, [139, 35]);
 });
+
+test('toCSV: 表示項目(properties)を追加列として出力する', () => {
+  const { UI } = newUI();
+  const csv = UI.toCSV([
+    { id: 'p1', type: 'point', tag: 't', name: 'A', coordinates: [35, 139], properties: { 用途: '商業', 階数: 3 } },
+    { id: 'p2', type: 'point', tag: 't', name: 'B', coordinates: [36, 140], properties: { 階数: 5, 詳細: { a: 1 } } },
+    { id: 'p3', type: 'point', tag: 't', name: 'C', coordinates: [37, 141] }
+  ]);
+  const lines = csv.split('\n');
+  assert.equal(lines[0], 'id,name,tag,type,lat,lng,note,用途,階数,詳細', '列は出現順の和集合');
+  assert.equal(lines[1], 'p1,A,t,point,35,139,,商業,3,');
+  assert.equal(lines[2], 'p2,B,t,point,36,140,,,5,"{""a"":1}"');
+  assert.equal(lines[3], 'p3,C,t,point,37,141,,,,');
+});
+
+test('parseProps: key: value を解釈し、値の型を推定する', () => {
+  const { UI } = newUI();
+  assert.deepEqual(UI.parseProps('用途: 商業施設\n階数: 12\nURL: https://example.com/a\n\nno-colon\n: novalue\n郵便番号: 0600001'), {
+    用途: '商業施設',
+    階数: 12,
+    URL: 'https://example.com/a',
+    郵便番号: '0600001'
+  });
+  assert.deepEqual(UI.parseProps(''), {});
+});

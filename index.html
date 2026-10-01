@@ -7,10 +7,13 @@
   <title>Map PlotView - 地図プロットツール</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
+  <!-- CDNライブラリはバージョン固定＋SRIで改ざんを検知する（更新時は integrity も再計算すること） -->
   <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
   <!-- Leaflet-Geoman -->
-  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css">
+  <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css"
+        integrity="sha384-gSVA7ZQriVGEfOMW54uY96acRPyZy0cleKq9KVWNxYYR+GWzYmr/o51k9iA5pfQA" crossorigin="anonymous">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -21,7 +24,9 @@
       <button id="btnSaveYaml" data-i18n="saveYaml">保存(YAML)</button>
       <button id="btnSaveGeo" data-i18n="saveGeoJson">保存(GeoJSON)</button>
       <button id="btnLoadSample" data-i18n="sample">サンプル</button>
-      <input type="file" id="fileInput" accept=".yaml,.yml,.geojson,.json,text/yaml,application/geo+json,application/json" hidden>
+      <button id="btnUndo" data-i18n="undo" data-i18n-title="undoTitle" disabled>元に戻す</button>
+      <button id="btnRedo" data-i18n="redo" data-i18n-title="redoTitle" disabled>やり直し</button>
+      <input type="file" id="fileInput" accept=".yaml,.yml,.geojson,.json,.csv,.tsv,text/yaml,application/geo+json,application/json,text/csv" hidden>
     </div>
     <div class="mpv-settings" aria-label="display settings">
       <button id="btnMapOnlyToggle" data-i18n="mapOnlyOpen" data-i18n-aria="mapOnlyOpen">地図のみ</button>
@@ -36,6 +41,15 @@
     <!-- 左：サイドバー -->
     <aside class="mpv-sidebar">
       <section class="mpv-panel">
+        <h2 data-i18n="placeSearchTitle">場所検索</h2>
+        <form id="placeSearchForm" class="mpv-placesearch" role="search">
+          <input type="search" id="placeSearch" class="mpv-search" data-i18n-placeholder="placeSearchPlaceholder" data-i18n-aria="placeSearchTitle" placeholder="住所・地名 / 緯度,経度">
+          <button type="submit" data-i18n="search">検索</button>
+        </form>
+        <div id="placeResults" class="mpv-list mpv-placeresults"></div>
+      </section>
+
+      <section class="mpv-panel">
         <h2 data-i18n="layersTitle">背景 / オーバーレイ</h2>
         <div class="mpv-baselayers">
           <label><input type="radio" name="base" value="std"> <span data-i18n="baseStd">標準</span></label>
@@ -44,8 +58,16 @@
           <label><input type="radio" name="base" value="osm"> <span data-i18n="baseOsm">OSM</span></label>
         </div>
         <div class="mpv-overlays">
+          <label><input type="checkbox" data-overlay="hillshade"> <span data-i18n="overlayHillshade">陰影起伏図</span></label>
+          <label><input type="checkbox" data-overlay="relief"> <span data-i18n="overlayRelief">色別標高図</span></label>
           <label><input type="checkbox" data-overlay="afm"> <span data-i18n="overlayAfm">活断層図</span></label>
+          <label><input type="checkbox" data-overlay="flood"> <span data-i18n="overlayFlood">洪水浸水想定</span></label>
+          <label><input type="checkbox" data-overlay="sediment"> <span data-i18n="overlaySediment">土砂災害警戒区域</span></label>
+          <label><input type="checkbox" data-overlay="tsunami"> <span data-i18n="overlayTsunami">津波浸水想定</span></label>
         </div>
+        <label class="mpv-opacity"><span data-i18n="overlayOpacity">重ね合わせの濃さ</span>
+          <input type="range" id="overlayOpacity" min="10" max="100" step="5" value="85">
+        </label>
       </section>
 
       <section class="mpv-panel">
@@ -109,6 +131,12 @@
     <!-- 中央：地図 -->
     <main class="mpv-mapwrap">
       <div id="map"></div>
+      <button id="btnLocate" class="mpv-map-btn" data-i18n-title="locate" data-i18n-aria="locate" title="現在地を表示" aria-label="現在地を表示">◎</button>
+      <div id="editBar" class="mpv-editbar" role="group" hidden>
+        <span data-i18n="reshapeEditing">形状を編集中</span>
+        <button id="btnReshapeDone" class="mpv-ok" data-i18n="reshapeConfirm">確定</button>
+        <button id="btnReshapeCancel" data-i18n="cancel">キャンセル</button>
+      </div>
       <button id="btnMapOnlyRestore" class="mpv-map-restore" data-i18n="mapOnlyClose" data-i18n-aria="mapOnlyClose" hidden>パネルを表示</button>
     </main>
 
@@ -116,18 +144,27 @@
     <aside id="detail" class="mpv-detail"></aside>
   </div>
 
+  <div class="mpv-drophint" aria-hidden="true"><span data-i18n="dropHint">ここにファイルをドロップして読込</span></div>
+
   <!-- ライブラリ（CDN） -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
-  <script src="https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
-  <script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
-  <script src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"
+          integrity="sha384-poTDWI/tmUEt0KLQICK55no+TBavCdngfb6kTay+hdEmU0SkVrXiYpu8OBDmAHf3" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.min.js"
+          integrity="sha384-+pxiN6T7yvpryuJmE1gM9PX7yQit15auDb+ZwwvJOd/4be2Cie5/IuVXgQb/S9du" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"
+          integrity="sha384-V2sTNoSKrI8N2u8kNbpZ2kJh54vI+OABRWz1t5/4m+fJuVeIoIkmILoRhQ/XRqrS" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js"
+          integrity="sha384-KrOocIA+lZcNUz2MDavnT/FuX+CbTREJihUi0bp8QUSwhE2AkGTNpv2b7yMbBkx5" crossorigin="anonymous"></script>
 
   <!-- アプリ -->
   <script src="js/util.js"></script>
   <script src="js/i18n.js"></script>
   <script src="js/symbols.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/history.js"></script>
+  <script src="js/geocode.js"></script>
   <script src="js/mapview.js"></script>
   <script src="js/select.js"></script>
   <script src="js/detail.js"></script>

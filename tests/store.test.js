@@ -172,3 +172,109 @@ test('mapToArray: Map/配列/オブジェクト/null を配列化する', () => 
   assert.deepEqual(Store.mapToArray({ x: 1 }), [1]);
   assert.deepEqual(Store.mapToArray(null), []);
 });
+
+test('parseYaml: タイムスタンプ風の値をDateにせず文字列のまま保持する', () => {
+  const Store = newStore();
+  const src = [
+    'features:',
+    '  - id: f1',
+    '    type: point',
+    '    coordinates: [35, 139]',
+    '    properties:',
+    '      発生日時: 2026-03-02T04:15:00+09:00',
+    '      着工予定: 2027-04'
+  ].join('\n');
+  const doc = Store.parseYaml(src);
+  assert.equal(doc.features[0].properties['発生日時'], '2026-03-02T04:15:00+09:00');
+  const again = Store.parseYaml(Store.dumpYaml({ tags: doc.tags, features: doc.features }));
+  assert.equal(again.features[0].properties['発生日時'], '2026-03-02T04:15:00+09:00', '保存→再読込で表記が変わらない');
+});
+
+test('parseYaml: 数値のID・タグ・名称・メモは文字列へ正規化する', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'tags:',
+    '  - { id: 7, name: Seven }',
+    'features:',
+    '  - { id: 1, type: point, tag: 7, name: 123, note: 456, coordinates: [35, 139] }'
+  ].join('\n'));
+  assert.equal(doc.warnings.length, 0);
+  assert.equal(doc.tags[0].id, '7');
+  const f = doc.features[0];
+  assert.equal(f.id, '1');
+  assert.equal(f.tag, '7', '数値タグも定義済みタグと一致する');
+  assert.equal(f.name, '123');
+  assert.equal(f.note, '456');
+});
+
+test('parseYaml: 重複IDは採番し直して警告する', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'features:',
+    '  - { id: p001, type: point, coordinates: [35, 139] }',
+    '  - { id: p001, type: point, coordinates: [36, 140] }',
+    '  - { id: p002, type: point, coordinates: [37, 141] }'
+  ].join('\n'));
+  const ids = doc.features.map(f => f.id);
+  assert.equal(doc.features.length, 3, '重複しても捨てない');
+  assert.equal(new Set(ids).size, 3);
+  assert.equal(ids[1], 'p003', '後続のp002と衝突しない番号');
+  assert.equal(doc.warnings.length, 1);
+});
+
+test('parseYaml: 不正なタグ定義・重複タグはスキップして警告する', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'tags:',
+    '  - ~',
+    '  - { name: no-id }',
+    '  - { id: a, name: A }',
+    '  - { id: a, name: A2 }',
+    '  - just-a-string'
+  ].join('\n'));
+  assert.deepEqual(doc.tags.map(t => t.name), ['A']);
+  assert.equal(doc.warnings.length, 4);
+});
+
+test('parseYaml: 不正なviewは既定値で補う', () => {
+  const Store = newStore();
+  const bad = Store.parseYaml('view: { center: [999, 0], zoom: abc, overlays: afm, overlayOpacity: 5 }');
+  assert.deepEqual(bad.view.center, Store.DEFAULT_VIEW.center);
+  assert.equal(bad.view.zoom, Store.DEFAULT_VIEW.zoom);
+  assert.deepEqual(bad.view.overlays, []);
+  assert.equal(bad.view.overlayOpacity, Store.DEFAULT_VIEW.overlayOpacity);
+
+  const ok = Store.parseYaml('view: { center: [34, 135], zoom: 9, baseLayer: osm, overlays: [afm, 3], overlayOpacity: 0.5 }');
+  assert.deepEqual(ok.view, { center: [34, 135], zoom: 9, baseLayer: 'osm', overlays: ['afm'], overlayOpacity: 0.5 });
+
+  assert.deepEqual(Store.parseYaml('view: nope').view, Store.DEFAULT_VIEW);
+});
+
+test('parseYaml: 配列ドキュメント・不正なmeta/properties/photosを安全に扱う', () => {
+  const Store = newStore();
+  assert.throws(() => Store.parseYaml('- a\n- b'), '最上位が配列ならthrow');
+  const doc = Store.parseYaml([
+    'meta: text',
+    'features:',
+    '  - id: f1',
+    '    type: point',
+    '    coordinates: [35, 139]',
+    '    properties: [1, 2]',
+    '    photos:',
+    '      - { src: a.jpg }',
+    '      - not-a-photo',
+    '      - { caption: no-src }',
+    '  - { id: f2, type: point, coordinates: [35, 139], photos: none }'
+  ].join('\n'));
+  assert.deepEqual(doc.meta, {});
+  assert.deepEqual(doc.features[0].properties, {});
+  assert.deepEqual(doc.features[0].photos, [{ src: 'a.jpg' }]);
+  assert.equal('photos' in doc.features[1], false);
+});
+
+test('parseYaml: 入力のオブジェクトを書き換えない既定viewを返す', () => {
+  const Store = newStore();
+  const a = Store.parseYaml('features: []');
+  a.view.zoom = 3;
+  assert.equal(Store.DEFAULT_VIEW.zoom, 13, 'DEFAULT_VIEW は共有されない');
+});

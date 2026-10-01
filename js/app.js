@@ -3,10 +3,12 @@
   'use strict';
 
   var LS_KEY = 'mpv:autosave';
+  var HISTORY_LIMIT = 50;
 
+  /* tags / features の各オブジェクトは書き換えず、変更時は新しいオブジェクトへ差し替える。
+   * 元に戻す履歴（スナップショット）が参照を共有するため。 */
   var state = {
     meta: {},
-    view: null,
     tags: new Map(),          // id -> tag
     features: new Map(),      // id -> feature
     hiddenTags: new Set(),    // 非表示タグ
@@ -15,12 +17,17 @@
   };
 
   var mapview, detail, ui;
+  var undoHistory = new global.UndoHistory(HISTORY_LIMIT);
   var selectMode = 'intersect';
   var respectHidden = true;
   var mapOnlyMode = false;
   var searchQuery = '';
   var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
   var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
+  var geomEditId = null;         // 形状編集中のfeatureId
+  var placeSearchSeq = 0;        // 場所検索の世代番号（古い応答を捨てる）
+  var Store = global.Store;
+  var UNCAT = Store.UNCATEGORIZED_ID;
   var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
 
   function tagsArray() { return Array.from(state.tags.values()); }
@@ -34,14 +41,16 @@
     if (global.I18n) global.I18n.init();
 
     mapview = new global.MapView();
-    mapview.initMap(document.getElementById('map'), state.view || global.Store.DEFAULT_VIEW, {
+    mapview.initMap(document.getElementById('map'), Store.DEFAULT_VIEW, {
       onFeatureClick: selectFeature
     });
 
     detail = new global.Detail(document.getElementById('detail'), {
       onFocus: function (f) { mapview.focusFeature(f.id); },
+      onReshape: function (f) { beginGeometryEdit(f.id); },
       onEdit: function (f) { editFeature(f); },
-      onDelete: function (f) { deleteFeature(f.id); }
+      onDelete: function (f) { deleteFeature(f.id); },
+      onSaveProperty: saveFeatureProperty
     });
     detail.clearDetail();
 
@@ -50,80 +59,108 @@
       featureList: document.getElementById('featureList'),
       selectionList: document.getElementById('selectionList'),
       selectionCount: document.getElementById('selectionCount'),
+      searchResults: document.getElementById('placeResults'),
       warnings: document.getElementById('warnings')
     }, {
       onToggleTag: toggleTag,
       onEditTag: function (t) { ui.openTagEditor(t, saveTag); },
       onDeleteTag: deleteTag,
-      onSelectFeature: selectFeature
+      onSelectFeature: selectFeature,
+      onPickSearchResult: showSearchResult
     });
 
     wireToolbar();
+    wireDropZone();
     if (global.I18n) {
       global.I18n.subscribe(function () {
         syncSystemTagLabels();
         if (mapview.map && mapview.map.closePopup) mapview.map.closePopup();
-        redrawFeatures();
-        renderAll();
+        mapview.clearSearchMarker(); // ポップアップ内のボタン文言が旧言語のまま残るため
+        setStatus('');               // 旧言語のステータス文言を残さない
+        refreshAll();
         syncMapOnlyControls();
-        if (state.activeFeatureId && state.features.has(state.activeFeatureId)) {
-          var f = state.features.get(state.activeFeatureId);
-          detail.showDetail(f, state.tags.get(f.tag), state.meta);
-        } else {
-          detail.clearDetail();
-        }
       });
     }
+    syncLayerControls();
     renderAll();
+    updateHistoryButtons();
     restoreAutosave();
   }
 
   /* ---- 入出力 ---- */
-  function loadFromYamlText(text) {
-    loadFromParser(global.Store.parseYaml, text);
-  }
 
-  function loadFromGeoJSONText(text) {
-    loadFromParser(global.Store.parseGeoJSON, text);
-  }
-
-  function loadFromParser(parser, text) {
+  /* テキストを解析して取り込む。既にデータがあれば「追加 / 置き換え」を選ばせる。 */
+  function importText(text, format) {
     var parsed;
     try {
-      parsed = parser(text);
+      parsed = Store.parseText(format, text);
     } catch (e) {
       alert(tr('loadError', { message: e.message }));
       return;
     }
-    applyParsed(parsed);
+    if (!state.features.size && !state.tags.size) {
+      applyParsed(parsed);
+      return;
+    }
+    // プロジェクト全体を表すYAMLは置き換え、部品として持ち込むGeoJSON/CSVは追加を既定にする
+    var preferMerge = format !== 'yaml';
+    global.UI.choose(tr('importTitle'),
+      tr('importMessage', { current: state.features.size, incoming: parsed.features.length }),
+      [
+        { key: 'merge', label: tr('importMerge'), primary: preferMerge },
+        { key: 'replace', label: tr('importReplace'), primary: !preferMerge }
+      ],
+      function (key) {
+        recordHistory();
+        if (key === 'merge') mergeParsed(parsed);
+        else applyParsed(parsed);
+      });
   }
 
-  /* パース済みデータ(state相当)を反映する。parsed.viewがnullなら現在の表示位置を維持。 */
+  /* パース済みデータで現在のデータを置き換える。parsed.viewがnullなら全体が収まる位置へ移動。 */
   function applyParsed(parsed) {
+    cancelSessions();
     state.meta = parsed.meta || {};
-    state.view = parsed.view;
-    state.tags = new Map();
-    parsed.tags.forEach(function (t) { state.tags.set(t.id, t); });
-    syncSystemTagLabels();
-    state.features = new Map();
-    parsed.features.forEach(function (f) { state.features.set(f.id, f); });
+    setData(parsed.tags, parsed.features);
     state.hiddenTags = new Set();
+    mapview.clearSelectionRect();
     state.selection = { rect: null, ids: [] };
     state.activeFeatureId = null;
 
-    if (state.view) {
-      mapview.map.setView(state.view.center, state.view.zoom);
-      if (state.view.baseLayer) mapview.setBaseLayer(state.view.baseLayer);
-      Object.keys(global.MapView.OVERLAY_DEFS).forEach(function (k) {
-        mapview.toggleOverlay(k, (state.view.overlays || []).indexOf(k) !== -1);
-      });
-      syncLayerControls();
-    }
-    redrawFeatures();
-    renderAll();
+    if (parsed.view) applyView(parsed.view);
+    refreshAll();
+    if (!parsed.view) mapview.fitAllFeatures();
     ui.showWarnings(parsed.warnings);
-    detail.clearDetail();
     autosave();
+  }
+
+  /* パース済みデータを現在のデータへ追加する（表示位置・meta・既存タグ定義は維持） */
+  function mergeParsed(parsed) {
+    cancelSessions();
+    var merged = Store.mergeData({ tags: tagsArray(), features: featuresArray() }, parsed);
+    setData(merged.tags, merged.features);
+    refreshAll();
+    mapview.fitAllFeatures();
+    ui.showWarnings(merged.warnings);
+    autosave();
+  }
+
+  function setData(tags, features) {
+    state.tags = new Map();
+    tags.forEach(function (t) { state.tags.set(t.id, t); });
+    syncSystemTagLabels();
+    state.features = new Map();
+    features.forEach(function (f) { state.features.set(f.id, f); });
+  }
+
+  function applyView(view) {
+    mapview.map.setView(view.center, view.zoom);
+    if (view.baseLayer) mapview.setBaseLayer(view.baseLayer);
+    Object.keys(global.MapView.OVERLAY_DEFS).forEach(function (k) {
+      mapview.toggleOverlay(k, (view.overlays || []).indexOf(k) !== -1);
+    });
+    mapview.setOverlayOpacity(view.overlayOpacity != null ? view.overlayOpacity : global.MapView.DEFAULT_OVERLAY_OPACITY);
+    syncLayerControls();
   }
 
   function exportYaml(features) {
@@ -133,7 +170,7 @@
       tags: tagsArray(),
       features: features || featuresArray()
     };
-    return global.Store.dumpYaml(snap);
+    return Store.dumpYaml(snap);
   }
 
   function exportGeoJSON(features) {
@@ -148,6 +185,18 @@
     document.body.appendChild(a);
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+
+  function loadFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var text = global.Util.decodeText(reader.result);
+      importText(text, Store.detectFormat(file.name, text));
+    };
+    reader.onerror = function () {
+      alert(tr('loadError', { message: (reader.error && reader.error.message) || file.name }));
+    };
+    reader.readAsArrayBuffer(file);
   }
 
   function selectionFeatures() {
@@ -169,20 +218,89 @@
     });
   }
 
+  /* ---- 元に戻す / やり直し ---- */
+  function snapshot() {
+    return { meta: state.meta, tags: tagsArray(), features: featuresArray() };
+  }
+
+  /* データを変更する直前に呼ぶ */
+  function recordHistory() {
+    undoHistory.record(snapshot());
+    updateHistoryButtons();
+  }
+
+  function restoreSnapshot(snap) {
+    cancelSessions();
+    state.meta = snap.meta;
+    setData(snap.tags, snap.features);
+    state.hiddenTags.forEach(function (id) {
+      if (!state.tags.has(id)) state.hiddenTags.delete(id);
+    });
+    state.selection.ids = state.selection.ids.filter(function (id) { return state.features.has(id); });
+    if (!state.features.has(state.activeFeatureId)) state.activeFeatureId = null;
+    refreshAll();
+    updateHistoryButtons();
+    autosave();
+  }
+
+  function undo() {
+    if (!undoHistory.canUndo()) return;
+    restoreSnapshot(undoHistory.undo(snapshot()));
+    setStatus(tr('undone'));
+  }
+
+  function redo() {
+    if (!undoHistory.canRedo()) return;
+    restoreSnapshot(undoHistory.redo(snapshot()));
+    setStatus(tr('redone'));
+  }
+
+  function updateHistoryButtons() {
+    var u = document.getElementById('btnUndo');
+    var r = document.getElementById('btnRedo');
+    if (u) u.disabled = !undoHistory.canUndo();
+    if (r) r.disabled = !undoHistory.canRedo();
+  }
+
   /* ---- 描画 ---- */
   function redrawFeatures() {
+    cancelGeometryEdit(); // レイヤを作り直すので編集中の形状は破棄する
     mapview.clearFeatures();
     var byId = tagsById();
     featuresArray().forEach(function (f) {
       mapview.renderFeature(f, byId[f.tag]);
-      mapview.setFeatureVisible(f.id, !state.hiddenTags.has(f.tag));
+      mapview.setFeatureVisible(f.id, !isHidden(f));
     });
+  }
+
+  /* 1フィーチャのレイヤを現在のstateから作り直す */
+  function rerenderFeature(f) {
+    mapview.removeFeature(f.id);
+    mapview.renderFeature(f, state.tags.get(f.tag));
+    mapview.setFeatureVisible(f.id, !isHidden(f));
+  }
+
+  function renderLists() {
+    ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
+    ui.renderSelectionList(selectionFeatures(), tagsById(), state.activeFeatureId);
   }
 
   function renderAll() {
     ui.renderTagList(tagsArray(), state.hiddenTags);
-    ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
-    ui.renderSelectionList(selectionFeatures(), tagsById(), state.activeFeatureId);
+    renderLists();
+  }
+
+  function showActiveDetail() {
+    var f = state.features.get(state.activeFeatureId);
+    if (f) detail.showDetail(f, state.tags.get(f.tag), state.meta);
+    else detail.clearDetail();
+  }
+
+  /* 地図・一覧・詳細をstateから描き直す */
+  function refreshAll() {
+    redrawFeatures();
+    renderAll();
+    showActiveDetail();
   }
 
   /* ---- 操作 ---- */
@@ -190,13 +308,13 @@
     var f = state.features.get(id);
     if (!f) return;
     state.activeFeatureId = id;
-    detail.showDetail(f, state.tags.get(f.tag), state.meta);
+    showActiveDetail();
     mapview.focusFeature(id);
-    ui.renderFeatureList(filteredFeatures(), tagsById(), id);
-    ui.renderSelectionList(selectionFeatures(), tagsById(), id);
+    renderLists();
   }
 
   function toggleTag(tagId, visible) {
+    cancelGeometryEdit();
     if (visible) state.hiddenTags.delete(tagId);
     else state.hiddenTags.add(tagId);
     featuresArray().forEach(function (f) {
@@ -211,42 +329,51 @@
       alert(tr('tagIdExists', { id: tag.id }));
       return false; // モーダルを閉じずに再入力へ
     }
+    recordHistory();
     state.tags.set(tag.id, tag);
-    redrawFeatures();
-    renderAll();
+    refreshAll();
     autosave();
   }
 
   function deleteTag(tagId) {
     if (!confirm(tr('deleteTagConfirm', { id: tagId }))) return;
+    recordHistory();
     state.tags.delete(tagId);
+    state.hiddenTags.delete(tagId);
     var orphaned = featuresArray().filter(function (f) { return f.tag === tagId; });
-    if (orphaned.length && !state.tags.has('__uncategorized__')) {
-      state.tags.set('__uncategorized__', { id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
-    }
-    orphaned.forEach(function (f) { f.tag = '__uncategorized__'; });
-    redrawFeatures();
-    renderAll();
+    if (orphaned.length && !state.tags.has(UNCAT)) state.tags.set(UNCAT, Store.uncategorizedTag());
+    orphaned.forEach(function (f) {
+      state.features.set(f.id, Object.assign({}, f, { tag: UNCAT }));
+    });
+    refreshAll();
     autosave();
   }
 
-  /* フィーチャの保存確定：state登録・再描画・詳細更新・自動退避 */
+  /* フィーチャの保存確定：履歴記録・state登録・再描画・詳細更新・自動退避 */
   function commitFeature(nf) {
+    recordHistory();
+    if (!state.tags.has(nf.tag) && nf.tag === UNCAT) state.tags.set(UNCAT, Store.uncategorizedTag());
     state.features.set(nf.id, nf);
-    mapview.removeFeature(nf.id);
-    mapview.renderFeature(nf, state.tags.get(nf.tag));
-    mapview.setFeatureVisible(nf.id, !state.hiddenTags.has(nf.tag));
+    rerenderFeature(nf);
     renderAll();
-    if (state.activeFeatureId === nf.id) detail.showDetail(nf, state.tags.get(nf.tag), state.meta);
+    if (state.activeFeatureId === nf.id) showActiveDetail();
     autosave();
+  }
+
+  /* 編集モーダルに出すタグ候補。タグが1つも無いときは「未分類」を仮に出す（保存時に実体化）。 */
+  function editorTags() {
+    return state.tags.size ? tagsArray() : [Store.uncategorizedTag()];
   }
 
   function editFeature(f) {
-    ui.openFeatureEditor(f, tagsArray(), { meta: state.meta }, commitFeature);
+    cancelSessions();
+    ui.openFeatureEditor(f, editorTags(), { meta: state.meta }, commitFeature);
   }
 
   function deleteFeature(id) {
     if (!confirm(tr('deleteFeatureConfirm'))) return;
+    cancelSessions();
+    recordHistory();
     state.features.delete(id);
     mapview.removeFeature(id);
     state.selection.ids = state.selection.ids.filter(function (x) { return x !== id; });
@@ -255,39 +382,61 @@
     autosave();
   }
 
+  /* 詳細ビューから表示項目を1つ保存する（標高など） */
+  function saveFeatureProperty(feature, key, value) {
+    var f = state.features.get(feature.id);
+    if (!f) return;
+    cancelSessions();
+    var props = Object.assign({}, f.properties);
+    props[key] = value;
+    commitFeature(Object.assign({}, f, { properties: props }));
+    setStatus(tr('propertySaved', { key: key }));
+  }
+
+  /* ---- セッション（作図 / 矩形選択 / 形状編集）は同時に1つだけ ---- */
+  function cancelSessions() {
+    cancelDraw();
+    cancelRectSelect();
+    cancelGeometryEdit();
+  }
+
   /* ---- 作図（Geomanがあれば利用） ---- */
   function addFeatureByType(type) {
     if (!mapview.map.pm) {
       alert(tr('drawToolMissing'));
       return;
     }
-    // 既存の作図/矩形選択セッションを解除してから開始（ハンドラ積み増しを防止）
-    cancelDraw();
-    cancelRectSelect();
+    // 既存のセッションを解除してから開始（ハンドラ積み増しを防止）
+    cancelSessions();
     var shape = { point: 'Marker', line: 'Line', polygon: 'Polygon' }[type];
     drawCreateHandler = function (e) {
-      var coords = geomanToCoords(type, e.layer);
+      var coords = global.MapView.layerToCoords(type, e.layer);
       mapview.map.removeLayer(e.layer); // 一旦削除し内部管理レイヤとして再生成
       cancelDraw();                     // セッション終了（disableDraw + off）
-      var f = {
-        id: nextId(type),
-        type: type,
-        tag: defaultTagId(),
-        name: '',
-        coordinates: coords,
-        properties: {}
-      };
-      // 確定前は state に登録せず、プレビュー描画のみ。保存で確定、キャンセルで破棄。
-      mapview.renderFeature(f, state.tags.get(f.tag));
-      ui.openFeatureEditor(f, tagsArray(), { meta: state.meta }, function (nf) {
-        mapview.removeFeature(f.id);     // プレビュー除去（IDが変更された場合に備え元IDで）
-        commitFeature(nf);
-      }, function () {
-        mapview.removeFeature(f.id);     // キャンセル：プレビュー破棄（state未登録）
-      });
+      openNewFeature(type, coords, '');
     };
     mapview.map.on('pm:create', drawCreateHandler);
     mapview.map.pm.enableDraw(shape, { snappable: true });
+  }
+
+  /* 未確定の新規フィーチャをプレビュー描画して編集モーダルを開く。
+   * 確定前は state に登録しない。保存で確定、キャンセルで破棄。 */
+  function openNewFeature(type, coords, name) {
+    var f = {
+      id: Store.nextFreeId(type, state.features),
+      type: type,
+      tag: state.tags.size ? tagsArray()[0].id : UNCAT,
+      name: name || '',
+      coordinates: coords,
+      properties: {}
+    };
+    mapview.renderFeature(f, state.tags.get(f.tag));
+    ui.openFeatureEditor(f, editorTags(), { meta: state.meta, isNew: true }, function (nf) {
+      mapview.removeFeature(f.id);     // プレビュー除去（IDが変更された場合に備え元IDで）
+      commitFeature(nf);
+    }, function () {
+      mapview.removeFeature(f.id);     // キャンセル：プレビュー破棄（state未登録）
+    });
   }
 
   function cancelDraw() {
@@ -302,44 +451,80 @@
     if (rectCleanup) { rectCleanup(); rectCleanup = null; }
   }
 
-  function geomanToCoords(type, layer) {
-    if (type === 'point') {
-      var ll = layer.getLatLng();
-      return [round(ll.lat), round(ll.lng)];
-    }
-    if (type === 'line') {
-      return layer.getLatLngs().map(function (p) { return [round(p.lat), round(p.lng)]; });
-    }
-    // polygon
-    var rings = layer.getLatLngs();
-    return rings.map(function (ring) { return ring.map(function (p) { return [round(p.lat), round(p.lng)]; }); });
-  }
-
-  function defaultTagId() {
-    var first = tagsArray()[0];
-    if (first) return first.id;
-    state.tags.set('__uncategorized__', { id: '__uncategorized__', name: tr('uncategorized'), color: '#9e9e9e' });
-    return '__uncategorized__';
-  }
-
   function syncSystemTagLabels() {
-    var tag = state.tags.get('__uncategorized__');
-    if (tag) tag.name = tr('uncategorized');
+    var tag = state.tags.get(UNCAT);
+    if (tag) tag.name = tr('uncategorized'); // 表示言語に追従する派生ラベルのためin-placeで更新
   }
 
-  function nextId(type) {
-    var p = (type === 'point' ? 'p' : type === 'line' ? 'l' : 'g');
-    var n = 1;
-    while (state.features.has(p + pad(n))) n++;
-    return p + pad(n);
+  /* ---- 形状編集 ---- */
+  function beginGeometryEdit(id) {
+    var f = state.features.get(id);
+    if (!f) return;
+    if (!mapview.map.pm) {
+      alert(tr('drawToolMissing'));
+      return;
+    }
+    cancelSessions();
+    if (!mapview.startGeometryEdit(id)) {
+      setStatus(tr('reshapeHidden'));
+      return;
+    }
+    geomEditId = id;
+    showEditBar(true);
+    setStatus(tr(f.type === 'point' ? 'reshapeHintPoint' : 'reshapeHintShape'));
   }
-  function pad(n) { return (n < 100 ? ('00' + n).slice(-3) : String(n)); }
+
+  /* 編集結果を確定する。不正な形状（頂点不足など）や変更なしの場合は元へ戻す。 */
+  function finishGeometryEdit() {
+    if (geomEditId == null) return;
+    var f = state.features.get(geomEditId);
+    var coords = f ? mapview.getEditedCoords(f.type) : null;
+    endGeometryEdit();
+    if (!f) return;
+    var nf = Object.assign({}, f, { coordinates: coords });
+    var v = Store.validateFeature(nf);
+    if (!v.ok) {
+      rerenderFeature(f);
+      setStatus('');
+      alert(tr('reshapeInvalid', { errors: v.errors.join(' / ') }));
+      return;
+    }
+    if (JSON.stringify(coords) === JSON.stringify(roundDeep(f.coordinates))) {
+      rerenderFeature(f);
+      setStatus('');
+      return;
+    }
+    commitFeature(nf);
+    setStatus(tr('reshapeSaved'));
+  }
+
+  function cancelGeometryEdit() {
+    if (geomEditId == null) return;
+    var f = state.features.get(geomEditId);
+    endGeometryEdit();
+    if (f) rerenderFeature(f);
+    setStatus('');
+  }
+
+  function endGeometryEdit() {
+    mapview.stopGeometryEdit();
+    geomEditId = null;
+    showEditBar(false);
+  }
+
+  function showEditBar(visible) {
+    var bar = document.getElementById('editBar');
+    if (bar) bar.hidden = !visible;
+  }
+
+  function roundDeep(c) {
+    return Array.isArray(c) ? c.map(roundDeep) : round(c);
+  }
 
   /* ---- 矩形範囲抽出（R9） ---- */
   function beginRectSelect() {
-    // 進行中の作図/前回の矩形選択セッションを解除（リスナ積み増し・残留矩形を防止）
-    cancelDraw();
-    cancelRectSelect();
+    // 進行中のセッションを解除（リスナ積み増し・残留矩形を防止）
+    cancelSessions();
     setStatus(tr('dragRect'));
     rectCleanup = mapview.startRectangleSelect(function (rectGeoJSON) {
       rectCleanup = null; // ドラッグ完了でセッション終了（内部cleanupは実行済み）
@@ -363,24 +548,61 @@
     setStatus('');
   }
 
+  /* ---- 場所検索 ---- */
+  function runPlaceSearch(query) {
+    var q = String(query || '').trim();
+    var seq = ++placeSearchSeq;
+    if (!q) {
+      ui.renderSearchResults([]);
+      mapview.clearSearchMarker();
+      return;
+    }
+    var latlng = global.Geo.parseLatLngQuery(q);
+    if (latlng) {
+      ui.renderSearchResults([]);
+      showSearchResult({ title: q, lat: latlng[0], lng: latlng[1] });
+      return;
+    }
+    ui.renderSearchResults(null, tr('searching'));
+    global.Geo.searchAddress(q).then(function (results) {
+      if (seq !== placeSearchSeq) return; // より新しい検索が始まっている
+      if (!results.length) {
+        ui.renderSearchResults(null, tr('searchNoResult'));
+        return;
+      }
+      ui.renderSearchResults(results);
+      if (results.length === 1) showSearchResult(results[0]);
+    }).catch(function (e) {
+      if (seq !== placeSearchSeq) return;
+      ui.renderSearchResults(null, tr('searchError', { message: e.message }));
+    });
+  }
+
+  /* 検索地点へ移動し、その場所を点として追加できるポップアップを出す */
+  function showSearchResult(r) {
+    mapview.showSearchMarker([r.lat, r.lng], r.title, {
+      label: tr('addPointHere'),
+      onClick: function () {
+        mapview.clearSearchMarker();
+        cancelSessions();
+        openNewFeature('point', [round(r.lat), round(r.lng)], r.title);
+      }
+    });
+  }
+
   /* ---- ツールバー結線 ---- */
   function wireToolbar() {
     on('btnLoad', 'click', function () { document.getElementById('fileInput').click(); });
-    document.getElementById('fileInput').addEventListener('change', function (e) {
+    on('fileInput', 'change', function (e) {
       var file = e.target.files[0];
-      if (!file) return;
-      var isGeoJSON = /\.(geojson|json)$/i.test(file.name);
-      var reader = new FileReader();
-      reader.onload = function () {
-        if (isGeoJSON) loadFromGeoJSONText(reader.result);
-        else loadFromYamlText(reader.result);
-      };
-      reader.readAsText(file);
+      if (file) loadFile(file);
       e.target.value = '';
     });
     on('btnSaveYaml', 'click', function () { download('map-data.yaml', exportYaml(), 'text/yaml;charset=utf-8'); });
     on('btnSaveGeo', 'click', function () { download('map-data.geojson', exportGeoJSON(), 'application/geo+json'); });
     on('btnLoadSample', 'click', loadSample);
+    on('btnUndo', 'click', undo);
+    on('btnRedo', 'click', redo);
     on('btnMapOnlyToggle', 'click', function () { setMapOnlyMode(!mapOnlyMode); });
     on('btnMapOnlyRestore', 'click', function () { setMapOnlyMode(false); });
 
@@ -398,11 +620,11 @@
       download('selection.yaml', exportYaml(selectionFeatures()), 'text/yaml;charset=utf-8');
     });
     on('btnExportSelGeo', 'click', function () {
-      download('selection.geojson', JSON.stringify(global.UI.toGeoJSONCollection(selectionFeatures()), null, 2), 'application/geo+json');
+      download('selection.geojson', exportGeoJSON(selectionFeatures()), 'application/geo+json');
     });
     on('btnExportSelCsv', 'click', function () {
       // BOM付与でExcelの文字化けを防ぐ
-      download('selection.csv', '\ufeff' + global.UI.toCSV(selectionFeatures(), tagsById()), 'text/csv;charset=utf-8');
+      download('selection.csv', '﻿' + global.UI.toCSV(selectionFeatures()), 'text/csv;charset=utf-8');
     });
 
     on('btnFitAll', 'click', function () { mapview.fitAllFeatures(); });
@@ -411,6 +633,25 @@
       ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
     });
 
+    // 場所検索・現在地
+    on('placeSearchForm', 'submit', function (e) {
+      e.preventDefault();
+      runPlaceSearch(document.getElementById('placeSearch').value);
+    });
+    on('placeSearch', 'input', function (e) {
+      if (!e.target.value) runPlaceSearch(''); // 入力を消したら候補とマーカーも片付ける
+    });
+    on('btnLocate', 'click', function () {
+      setStatus(tr('locating'));
+      mapview.locate(
+        function () { setStatus(''); },
+        function (err) { setStatus(tr('locateError', { message: (err && err.message) || '' })); });
+    });
+
+    // 形状編集バー
+    on('btnReshapeDone', 'click', finishGeometryEdit);
+    on('btnReshapeCancel', 'click', cancelGeometryEdit);
+
     // 背景レイヤ・オーバーレイ
     document.querySelectorAll('input[name="base"]').forEach(function (r) {
       r.addEventListener('change', function () { mapview.setBaseLayer(r.value); autosave(); });
@@ -418,15 +659,86 @@
     document.querySelectorAll('input[data-overlay]').forEach(function (c) {
       c.addEventListener('change', function () { mapview.toggleOverlay(c.getAttribute('data-overlay'), c.checked); autosave(); });
     });
+    on('overlayOpacity', 'input', function (e) { mapview.setOverlayOpacity(e.target.value / 100); });
+    on('overlayOpacity', 'change', autosave);
 
-    document.addEventListener('keydown', function (e) {
-      if (e.key !== 'Escape') return;
-      if (document.querySelector('.mpv-modal')) return; // モーダル表示中は干渉しない
-      if (drawCreateHandler) { cancelDraw(); setStatus(''); return; }
-      if (rectCleanup) { cancelRectSelect(); setStatus(''); return; }
-      if (mapOnlyMode) setMapOnlyMode(false);
-    });
+    document.addEventListener('keydown', onKeyDown);
     syncMapOnlyControls();
+  }
+
+  function onKeyDown(e) {
+    if (document.querySelector('.mpv-modal, .mpv-lightbox')) return; // モーダル表示中は干渉しない
+    var mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+    var key = String(e.key || '').toLowerCase();
+    if (mod && (key === 'z' || key === 'y')) {
+      if (isTextEntry(e.target)) return; // 入力欄ではブラウザ標準の取り消しを優先
+      e.preventDefault();
+      if (key === 'y' || e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (key === 'enter' && geomEditId != null && !mod && !isTextEntry(e.target) && !isActivatable(e.target)) {
+      e.preventDefault();
+      finishGeometryEdit();
+      return;
+    }
+    if (key !== 'escape') return;
+    if (geomEditId != null) { cancelGeometryEdit(); return; }
+    if (drawCreateHandler) { cancelDraw(); setStatus(''); return; }
+    if (rectCleanup) { cancelRectSelect(); setStatus(''); return; }
+    if (mapOnlyMode) setMapOnlyMode(false);
+  }
+
+  /* 文字入力を受け付ける要素か（チェックボックス等のinputは除く） */
+  function isTextEntry(el) {
+    if (!el || !el.tagName) return false;
+    if (el.isContentEditable) return true;
+    var tag = el.tagName;
+    if (tag === 'TEXTAREA') return true;
+    if (tag !== 'INPUT') return false;
+    return ['checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit', 'reset'].indexOf(el.type) === -1;
+  }
+
+  /* Enterで自身が作動する要素か（二重実行を避ける） */
+  function isActivatable(el) {
+    return !!el && !!el.tagName && ['BUTTON', 'A', 'SELECT', 'SUMMARY'].indexOf(el.tagName) !== -1;
+  }
+
+  /* ファイルのドラッグ&ドロップ読込。ページ外への遷移（ブラウザ既定動作）も防ぐ。 */
+  function wireDropZone() {
+    var depth = 0;
+    function hasFiles(e) {
+      var types = e.dataTransfer && e.dataTransfer.types;
+      return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+    }
+    function setDropping(onOff) { document.body.classList.toggle('is-dropping', onOff); }
+    function isModalOpen() { return !!document.querySelector('.mpv-modal, .mpv-lightbox'); }
+    function isFileInput(e) { return !!(e.target && e.target.closest && e.target.closest('input[type="file"]')); }
+
+    window.addEventListener('dragenter', function (e) {
+      if (!hasFiles(e)) return;
+      depth++;
+      if (!isModalOpen()) setDropping(true);
+    });
+    window.addEventListener('dragleave', function (e) {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDropping(false);
+    });
+    window.addEventListener('dragover', function (e) {
+      if (!hasFiles(e) || isFileInput(e)) return; // 写真のファイル入力へのドロップはブラウザに任せる
+      e.preventDefault();
+      e.dataTransfer.dropEffect = isModalOpen() ? 'none' : 'copy';
+    });
+    window.addEventListener('drop', function (e) {
+      depth = 0;
+      setDropping(false);
+      if (!hasFiles(e) || isFileInput(e)) return;
+      e.preventDefault();
+      if (isModalOpen()) return;
+      var file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) loadFile(file);
+    });
   }
 
   function setMapOnlyMode(on) {
@@ -474,13 +786,15 @@
     document.querySelectorAll('input[data-overlay]').forEach(function (c) {
       c.checked = ov.indexOf(c.getAttribute('data-overlay')) !== -1;
     });
+    var slider = document.getElementById('overlayOpacity');
+    if (slider) slider.value = Math.round(mapview.overlayOpacity * 100);
   }
 
   /* ---- サンプル/自動退避 ---- */
   function loadSample() {
     fetch('samples/sample.yaml')
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-      .then(loadFromYamlText)
+      .then(function (text) { importText(text, 'yaml'); })
       .catch(function (e) {
         alert(tr('sampleLoadError', { message: e.message }));
       });
@@ -489,14 +803,20 @@
   function autosave() {
     try {
       localStorage.setItem(LS_KEY, exportYaml());
-    } catch (e) { /* quota等は無視 */ }
+    } catch (e) {
+      // 容量超過（埋め込み写真が多い等）。編集は続けられるが退避されないことを知らせる
+      setStatus(tr('autosaveFailed'));
+    }
   }
 
   function restoreAutosave() {
     var saved;
     try { saved = localStorage.getItem(LS_KEY); } catch (e) { saved = null; }
-    if (saved) {
-      if (confirm(tr('restoreAutosave'))) loadFromYamlText(saved);
+    if (!saved || !confirm(tr('restoreAutosave'))) return;
+    try {
+      applyParsed(Store.parseYaml(saved));
+    } catch (e) {
+      alert(tr('loadError', { message: e.message }));
     }
   }
 
@@ -515,9 +835,11 @@
   global.App = {
     boot: boot,
     _state: state,
-    loadFromYamlText: loadFromYamlText,
+    importText: importText,
     exportYaml: exportYaml,
-    selectionFeatures: selectionFeatures
+    selectionFeatures: selectionFeatures,
+    undo: undo,
+    redo: redo
   };
 
   if (typeof document !== 'undefined') {

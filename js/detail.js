@@ -2,7 +2,7 @@
 (function (global) {
   'use strict';
 
-  var esc = function (s) { return global.Symbols.escapeHtml(s); };
+  var esc = function (s) { return global.Util.escapeHtml(s); };
   var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
   var typeLabel = function (type) { return global.I18n ? global.I18n.typeLabel(type) : type; };
 
@@ -35,7 +35,12 @@
 
     // 座標 / 計測
     html.push('<section class="mpv-detail__sec"><h3>' + esc(tr('coordinates')) + '</h3>');
-    html.push('<div class="mpv-coords">' + coordSummary(feature, m) + '</div></section>');
+    html.push('<div class="mpv-coords">' + coordSummary(feature, m) + '</div>');
+    if (feature.type === 'point' && global.Geo) {
+      html.push('<div class="mpv-elev"><button type="button" class="mpv-mini" data-elev="get">' + esc(tr('elevationGet')) +
+        '</button> <span class="mpv-elev__result" aria-live="polite"></span></div>');
+    }
+    html.push('</section>');
 
     // properties
     var props = feature.properties || {};
@@ -70,6 +75,7 @@
     // アクション
     html.push('<div class="mpv-detail__actions">' +
       '<button data-action="focus">' + esc(tr('focusOnMap')) + '</button>' +
+      '<button data-action="reshape">' + esc(tr('reshape')) + '</button>' +
       '<button data-action="edit">' + esc(tr('edit')) + '</button>' +
       '<button data-action="delete" class="danger">' + esc(tr('delete')) + '</button></div>');
 
@@ -89,14 +95,35 @@
         if (self.opts['on' + cap(a)]) self.opts['on' + cap(a)](feature);
       });
     });
+    var elevBtn = this.el.querySelector('[data-elev="get"]');
+    if (elevBtn) elevBtn.addEventListener('click', function () { self._fetchElevation(feature, elevBtn); });
   };
 
-  Detail.prototype.renderPhotos = function (photos, photoBase) {
-    // 単体利用向け（編集モーダル等）。HTML文字列を返す。
-    return (photos || []).map(function (p) {
-      var src = resolveSrc(p.src, { photoBase: photoBase });
-      return '<img class="mpv-thumb-img" src="' + esc(src) + '" alt="' + esc(p.caption || '') + '">';
-    }).join('');
+  /* 点の標高を取得して表示し、表示項目へ保存するボタンを出す */
+  Detail.prototype._fetchElevation = function (feature, btn) {
+    var self = this;
+    var out = this.el.querySelector('.mpv-elev__result');
+    if (!out) return;
+    btn.disabled = true;
+    out.textContent = tr('elevationLoading');
+    global.Geo.getElevation(feature.coordinates[0], feature.coordinates[1]).then(function (res) {
+      if (self.current !== feature || !out.isConnected) return; // 取得中に別の項目へ切り替わった
+      btn.disabled = false;
+      if (!res) { out.textContent = tr('elevationNoData'); return; }
+      out.textContent = tr('elevationValue', { value: res.elevation, source: res.source }) + ' ';
+      var save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'mpv-mini';
+      save.textContent = tr('elevationSave');
+      save.addEventListener('click', function () {
+        if (self.opts.onSaveProperty) self.opts.onSaveProperty(feature, tr('elevationPropKey'), res.elevation);
+      });
+      out.appendChild(save);
+    }).catch(function (e) {
+      if (self.current !== feature || !out.isConnected) return;
+      btn.disabled = false;
+      out.textContent = tr('elevationError', { message: e.message });
+    });
   };
 
   Detail.prototype.openLightbox = function (photo, meta) {
@@ -105,8 +132,8 @@
     box.className = 'mpv-lightbox';
     var info = [];
     if (photo.caption) info.push(esc(photo.caption));
-    if (photo.takenAt) info.push(esc(tr('takenAt')) + ': ' + esc(String(photo.takenAt)));
-    if (photo.location) info.push(esc(tr('location')) + ': ' + esc(photo.location.join(', ')));
+    if (photo.takenAt) info.push(esc(tr('takenAt')) + ': ' + esc(formatVal(photo.takenAt)));
+    if (Array.isArray(photo.location)) info.push(esc(tr('location')) + ': ' + esc(photo.location.join(', ')));
     box.innerHTML =
       '<div class="mpv-lightbox__inner">' +
       '<button class="mpv-lightbox__close" aria-label="' + esc(tr('close')) + '">x</button>' +
