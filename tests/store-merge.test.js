@@ -84,3 +84,23 @@ test('uncategorizedTag: 呼び出しごとに新しいオブジェクトを返�
   assert.equal(a.id, Store.UNCATEGORIZED_ID);
   assert.notEqual(a, b);
 });
+
+test('mergeData: constructor のようなID・タグも通常どおり統合する', () => {
+  const Store = newStore();
+  const out = Store.mergeData(
+    { tags: [], features: [] },
+    { tags: [{ id: 'constructor' }], features: [pt('toString', 'constructor')], warnings: [] }
+  );
+  assert.deepEqual(out.tags.map(t => t.id), ['constructor']);
+  assert.deepEqual(out.features.map(f => f.id), ['toString']);
+  assert.equal(out.warnings.length, 0);
+});
+
+test('mergeData: 多数の衝突でも採番が重複しない', () => {
+  const Store = newStore();
+  const mk = n => Array.from({ length: n }, (_, i) => pt('p' + String(i + 1).padStart(3, '0')));
+  const out = Store.mergeData({ tags: [], features: mk(300) }, { tags: [], features: mk(300), warnings: [] });
+  assert.equal(new Set(out.features.map(f => f.id)).size, 600);
+  assert.equal(out.warnings.length, 300);
+  assert.equal(out.features[300].id, 'p301');
+});

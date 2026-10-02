@@ -41,6 +41,8 @@ jobs:
         run: npm test
 
   deploy:
+    # 手動実行(workflow_dispatch)でも main 以外からは公開しない
+    if: github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest
     environment:

@@ -50,6 +50,11 @@ test('Util.parseScalar: 数値は数値化し、先頭ゼロのコード値や�
   assert.equal(Util.parseScalar('0'), 0);
   assert.equal(Util.parseScalar('-3.25'), -3.25);
   assert.equal(Util.parseScalar('007'), '007', '郵便番号・コード値の先頭ゼロを落とさない');
+  assert.equal(Util.parseScalar('+819012345678'), '+819012345678', '電話番号の + を落とさない');
+  assert.equal(Util.parseScalar('1.10'), '1.10', '末尾ゼロ（版番号など）を落とさない');
+  assert.equal(Util.parseScalar('12345678901234567890'), '12345678901234567890', '桁あふれする整数は文字列のまま');
+  assert.equal(Util.parseScalar('9007199254740993'), '9007199254740993');
+  assert.equal(Util.parseScalar('-0'), '-0');
   assert.equal(Util.parseScalar('5強'), '5強');
   assert.equal(Util.parseScalar('  text  '), 'text');
   assert.equal(Util.parseScalar(''), '');
@@ -64,4 +69,10 @@ test('Util.decodeText: UTF-8(BOM付き含む)とShift_JISを判別して復号�
   // 「緯度」の Shift_JIS バイト列（UTF-8としては不正）
   const sjis = new Uint8Array([0x88, 0xdc, 0x93, 0x78]);
   assert.equal(Util.decodeText(sjis.buffer), '緯度');
+  // BOM付きUTF-16（Excelの「Unicodeテキスト」）
+  const utf16le = new Uint8Array([0xff, 0xfe, 0xef, 0x7d, 0xa6, 0x5e]);
+  assert.equal(Util.decodeText(utf16le.buffer), '緯度');
+  const utf16be = new Uint8Array([0xfe, 0xff, 0x7d, 0xef, 0x5e, 0xa6]);
+  assert.equal(Util.decodeText(utf16be.buffer), '緯度');
+  assert.equal(Util.decodeText(new ArrayBuffer(0)), '');
 });

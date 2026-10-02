@@ -24,6 +24,8 @@ test('parseLatLngQuery: 緯度経度の直接入力を解釈する', () => {
   assert.deepEqual(Geo.parseLatLngQuery(' 35.681 139.767 '), [35.681, 139.767]);
   assert.deepEqual(Geo.parseLatLngQuery('-33.86,151.21'), [-33.86, 151.21]);
   assert.deepEqual(Geo.parseLatLngQuery('139.767, 35.681'), [35.681, 139.767], '経度,緯度の順は入れ替える');
+  assert.deepEqual(Geo.parseLatLngQuery('３５．６８１，１３９．７６７'), [35.681, 139.767], '全角の数字・カンマ');
+  assert.deepEqual(Geo.parseLatLngQuery('35.5, 139'), [35.5, 139], '片方だけ小数でもよい');
 });
 
 test('parseLatLngQuery: 座標でない入力・範囲外はnull', () => {
@@ -31,7 +33,10 @@ test('parseLatLngQuery: 座標でない入力・範囲外はnull', () => {
   assert.equal(Geo.parseLatLngQuery('東京駅'), null);
   assert.equal(Geo.parseLatLngQuery('東京都千代田区1-2'), null);
   assert.equal(Geo.parseLatLngQuery('35.681'), null);
-  assert.equal(Geo.parseLatLngQuery('200, 300'), null);
+  assert.equal(Geo.parseLatLngQuery('200.5, 300.5'), null);
+  assert.equal(Geo.parseLatLngQuery('1,000'), null, '桁区切りの数値を座標と誤認しない');
+  assert.equal(Geo.parseLatLngQuery('100 0001'), null, '郵便番号を座標と誤認しない');
+  assert.equal(Geo.parseLatLngQuery('1 2'), null);
   assert.equal(Geo.parseLatLngQuery(''), null);
   assert.equal(Geo.parseLatLngQuery(null), null);
 });
@@ -90,4 +95,26 @@ test('parseElevation / getElevation: 数値は採用し、データ無し("-----
   assert.equal(Geo.parseElevation({ elevation: '-----', hsrc: '-----' }), null);
   assert.equal(Geo.parseElevation(null), null);
   assert.deepEqual(Geo.parseElevation({ elevation: 0 }), { elevation: 0, source: '' }, '標高0mは有効値');
+});
+
+test('parseAddressResults: 名称の一致度順に並べてから件数を絞る', () => {
+  const Geo = newGeo();
+  const item = title => ({ geometry: { coordinates: [139, 35] }, properties: { title } });
+  const json = [];
+  for (let i = 0; i < 40; i++) json.push(item('北海道東' + i + '町'));
+  json.push(item('新東京駅前'), item('東京駅北口'), item('東京駅'));
+  const out = Geo.parseAddressResults(json, 5, '東京駅');
+  assert.deepEqual(out.map(r => r.title), ['東京駅', '東京駅北口', '新東京駅前', '北海道東0町', '北海道東1町'],
+    '完全一致 → 前方一致 → 部分一致 → その他（元の順）');
+  assert.equal(Geo.parseAddressResults(json, 5)[0].title, '北海道東0町', 'クエリ無しなら元の順');
+});
+
+test('searchAddress: 後方に埋もれた本命を先頭に返す', async () => {
+  const body = [];
+  for (let i = 0; i < 49; i++) body.push({ geometry: { coordinates: [141, 43] }, properties: { title: '北海道東' + i } });
+  body.push({ geometry: { coordinates: [139.767, 35.681] }, properties: { title: '東京駅' } });
+  const Geo = newGeo(() => jsonResponse(body));
+  const out = await Geo.searchAddress('東京駅');
+  assert.equal(out.length, 20);
+  assert.equal(out[0].title, '東京駅');
 });

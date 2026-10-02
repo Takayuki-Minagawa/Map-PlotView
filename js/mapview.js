@@ -34,7 +34,12 @@
     tsunami:   { urls: [HAZARD + '04_tsunami_newlegend_data/{z}/{x}/{y}.png'], attr: HAZARD_ATTR, max: 17 }  // 津波浸水想定
   };
   var DEFAULT_OVERLAY_OPACITY = 0.85;
+  /* タイルの重ね順は zIndex で固定する（背景 < オーバーレイ定義順）。
+   * bringToBack() は表示中レイヤの最小zIndex-1へ書き換えるため、背景が一部のオーバーレイより上に来てしまう。 */
+  var BASE_Z_INDEX = 1;
+  var OVERLAY_Z_INDEX = 10;
   var SEARCH_COLOR = '#ff5722';
+  var MIN_DRAG_PX = 4; // 矩形選択とみなす最小のドラッグ量
 
   function MapView() {
     this.map = null;
@@ -48,7 +53,7 @@
     this.searchMarker = null;
     this.locationLayer = null;
     this._editingId = null;         // 形状編集中のfeatureId
-    this._locating = false;
+    this._locateCallbacks = null;
     this._onFeatureClick = null;
   }
 
@@ -65,13 +70,13 @@
     var self = this;
     Object.keys(BASE_DEFS).forEach(function (k) {
       var d = BASE_DEFS[k];
-      self.baseLayers[k] = global.L.tileLayer(d.url, { attribution: d.attr, maxZoom: MAX_ZOOM, maxNativeZoom: d.max });
+      self.baseLayers[k] = global.L.tileLayer(d.url, { attribution: d.attr, maxZoom: MAX_ZOOM, maxNativeZoom: d.max, zIndex: BASE_Z_INDEX });
     });
     Object.keys(OVERLAY_DEFS).forEach(function (k, i) {
       var d = OVERLAY_DEFS[k];
       self.overlayLayers[k] = global.L.layerGroup(d.urls.map(function (url) {
         return global.L.tileLayer(url, {
-          attribution: d.attr, maxZoom: MAX_ZOOM, maxNativeZoom: d.max, opacity: self.overlayOpacity, zIndex: 10 + i
+          attribution: d.attr, maxZoom: MAX_ZOOM, maxNativeZoom: d.max, opacity: self.overlayOpacity, zIndex: OVERLAY_Z_INDEX + i
         });
       }));
     });
@@ -82,6 +87,7 @@
 
     this.featureGroup = global.L.featureGroup().addTo(this.map);
     this._watchResize(el);
+    this._watchLocation();
     return this.map;
   };
 
@@ -106,7 +112,6 @@
       this.map.removeLayer(this.baseLayers[this.currentBaseKey]);
     }
     this.baseLayers[key].addTo(this.map);
-    if (this.baseLayers[key].bringToBack) this.baseLayers[key].bringToBack();
     this.currentBaseKey = key;
   };
 
@@ -289,7 +294,8 @@
 
   /* Leafletレイヤ → 内部座標（[緯度,経度]、丸め済み） */
   function layerToCoords(type, layer) {
-    var pt = function (p) { return [round(p.lat), round(p.lng)]; };
+    // 世界地図を横にスクロールした先（経度±180の外）で描いた座標は -180〜180 へ戻す
+    var pt = function (p) { var w = p.wrap(); return [round(w.lat), round(w.lng)]; };
     if (type === 'point') return pt(layer.getLatLng());
     if (type === 'line') return layer.getLatLngs().map(pt);
     return layer.getLatLngs().map(function (ring) { return ring.map(pt); }); // polygon: リング配列
@@ -329,29 +335,32 @@
     if (this.searchMarker) { this.map.removeLayer(this.searchMarker); this.searchMarker = null; }
   };
 
-  /* 現在地へ移動し、位置と精度円を表示する。成功時 onDone()、失敗時 onError(event) を呼ぶ。 */
-  MapView.prototype.locate = function (onDone, onError) {
+  /* 現在地の取得結果を受けるリスナ（initMapで1回だけ登録）。
+   * 許可ダイアログを放置・無視されるとどちらのイベントも来ないため、
+   * 「取得中」フラグで再実行を塞がず、最後に指定されたコールバックへ結果を渡す。 */
+  MapView.prototype._watchLocation = function () {
     var self = this, map = this.map;
-    if (this._locating) return;
-    this._locating = true;
-    function done() {
-      self._locating = false;
-      map.off('locationfound', found);
-      map.off('locationerror', failed);
-    }
-    function found(e) {
-      done();
+    map.on('locationfound', function (e) {
       if (self.locationLayer) map.removeLayer(self.locationLayer);
       self.locationLayer = global.L.layerGroup([
         global.L.circle(e.latlng, { radius: e.accuracy, color: '#1565c0', weight: 1, fillOpacity: 0.12, interactive: false, pmIgnore: true }),
         global.L.circleMarker(e.latlng, { radius: 6, color: '#fff', weight: 2, fillColor: '#1565c0', fillOpacity: 1, interactive: false, pmIgnore: true })
       ]).addTo(map);
-      if (onDone) onDone();
-    }
-    function failed(e) { done(); if (onError) onError(e); }
-    map.on('locationfound', found);
-    map.on('locationerror', failed);
-    map.locate({ setView: true, maxZoom: 16, enableHighAccuracy: true, timeout: 10000 });
+      var cb = self._locateCallbacks;
+      self._locateCallbacks = null;
+      if (cb && cb.onDone) cb.onDone();
+    });
+    map.on('locationerror', function (e) {
+      var cb = self._locateCallbacks;
+      self._locateCallbacks = null;
+      if (cb && cb.onError) cb.onError(e);
+    });
+  };
+
+  /* 現在地へ移動し、位置と精度円を表示する。成功時 onDone()、失敗時 onError(event) を呼ぶ。 */
+  MapView.prototype.locate = function (onDone, onError) {
+    this._locateCallbacks = { onDone: onDone, onError: onError };
+    this.map.locate({ setView: true, maxZoom: 16, enableHighAccuracy: true, timeout: 10000 });
   };
 
   /* ---- 矩形選択 ---- */
@@ -362,18 +371,23 @@
   MapView.prototype.startRectangleSelect = function (onDone) {
     var self = this, map = this.map;
     var container = map.getContainer();
-    var start = null, rect = null, pointerId = null;
+    var start = null, startPx = null, rect = null, pointerId = null;
+    var prevTouchAction = container.style.touchAction;
     this.clearSelectionRect();
     map.dragging.disable();
     container.style.cursor = 'crosshair';
-    container.classList.add('mpv-rect-selecting');
+    // 1本指ドラッグをブラウザのスクロール/更新ジェスチャに取られないようにする
+    // （LeafletのCSSより優先させるためインラインで指定）
+    container.style.touchAction = 'none';
 
     function onDown(e) {
-      if (start || e.isPrimary === false) return;
+      if (e.isPrimary === false) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (e.target && e.target.closest && e.target.closest('.leaflet-control')) return; // ズームボタン等は通す
+      if (start) discardDrag(); // pointerupを取り逃した前回のドラッグが残っていれば捨てる
       pointerId = e.pointerId;
       start = map.mouseEventToLatLng(e);
+      startPx = [e.clientX, e.clientY];
       rect = global.L.rectangle([start, start], {
         color: SEARCH_COLOR, weight: 2, dashArray: '5,5', fillOpacity: 0.08, interactive: false, pmIgnore: true
       }).addTo(map);
@@ -386,8 +400,9 @@
     function onUp(e) {
       if (!start || e.pointerId !== pointerId) return;
       var b = global.L.latLngBounds(start, map.mouseEventToLatLng(e));
-      // ドラッグ無し（面積ゼロ）の矩形は破棄して次のドラッグを待つ
-      if (!b.isValid() || b.getNorth() === b.getSouth() || b.getEast() === b.getWest()) {
+      // クリック/タップや手ぶれ程度の移動は範囲指定とみなさず、次のドラッグを待つ
+      var tooSmall = Math.abs(e.clientX - startPx[0]) < MIN_DRAG_PX || Math.abs(e.clientY - startPx[1]) < MIN_DRAG_PX;
+      if (tooSmall || !b.isValid()) {
         discardDrag();
         return;
       }
@@ -405,7 +420,7 @@
     }
     function discardDrag() {
       if (rect) map.removeLayer(rect);
-      rect = null; start = null; pointerId = null;
+      rect = null; start = null; startPx = null; pointerId = null;
     }
     function onCancel(e) {
       if (start && e.pointerId === pointerId) discardDrag();
@@ -417,10 +432,10 @@
       document.removeEventListener('pointercancel', onCancel);
       map.dragging.enable();
       container.style.cursor = '';
-      container.classList.remove('mpv-rect-selecting');
+      container.style.touchAction = prevTouchAction;
       // 未確定（途中キャンセル）の矩形が残っていれば除去
       if (rect && rect !== self.selectionRect) map.removeLayer(rect);
-      rect = null; start = null; pointerId = null;
+      rect = null; start = null; startPx = null; pointerId = null;
     }
 
     container.addEventListener('pointerdown', onDown);

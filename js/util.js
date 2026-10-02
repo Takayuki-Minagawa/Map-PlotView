@@ -29,17 +29,20 @@
     return /^[-+]?\d+(\.\d+)?$/.test(v) ? parseFloat(v) : NaN;
   }
 
-  /* テキスト入力値の型推定：数値に見えるものは数値、それ以外は前後空白を除いた文字列。
-   * '007' のような先頭ゼロ付きはコード値とみなし文字列のまま保持する。 */
+  /* テキスト入力値の型推定：前後空白を除き、数値にしても表記が変わらないものだけ数値にする。
+   * '007'（コード値）, '+8190…'（電話番号）, '1.10'（版番号）, 桁あふれする整数などは文字列のまま保持する。 */
   function parseScalar(s) {
     var v = String(s == null ? '' : s).trim();
-    if (/^[-+]?0\d/.test(v)) return v;
     var n = toNumber(v);
-    return isNaN(n) ? v : n;
+    return (!isNaN(n) && String(n) === v) ? n : v;
   }
 
-  /* ファイル内容(ArrayBuffer)を文字列へ。UTF-8として不正ならShift_JIS（Excelの既定CSV）とみなす。 */
+  /* ファイル内容(ArrayBuffer)を文字列へ。BOM付きUTF-16（Excelの「Unicodeテキスト」）はそのまま復号し、
+   * それ以外はUTF-8、UTF-8として不正ならShift_JIS（Excelの既定CSV）とみなす。 */
   function decodeText(buffer) {
+    var head = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength));
+    if (head[0] === 0xff && head[1] === 0xfe) return new TextDecoder('utf-16le').decode(buffer);
+    if (head[0] === 0xfe && head[1] === 0xff) return new TextDecoder('utf-16be').decode(buffer);
     try {
       return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
     } catch (e) {

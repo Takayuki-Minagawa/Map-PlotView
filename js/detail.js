@@ -28,9 +28,10 @@
     var glyph = global.Symbols.glyphFor(feature.symbol || (tag && tag.symbol));
     var color = (tag && tag.color) || '#666';
     html.push('<span class="mpv-detail__glyph" style="background:' + esc(color) + '">' + esc(glyph) + '</span>');
-    html.push('<div><h2>' + esc(feature.name || feature.id || tr('unnamed')) + '</h2>');
+    html.push('<div class="mpv-detail__title"><h2>' + esc(feature.name || feature.id || tr('unnamed')) + '</h2>');
     html.push('<div class="mpv-detail__sub"><span class="mpv-chip" style="--mpv-color:' + esc(color) + '">' +
       esc(tag ? (tag.name || tag.id) : tr('uncategorized')) + '</span> <span class="mpv-type">' + esc(typeLabel(feature.type)) + '</span></div></div>');
+    html.push('<button type="button" class="mpv-detail__close" aria-label="' + esc(tr('close')) + '" title="' + esc(tr('close')) + '">x</button>');
     html.push('</div>');
 
     // 座標 / 計測
@@ -66,7 +67,7 @@
       photos.forEach(function (p, i) {
         var src = resolveSrc(p.src, meta);
         html.push('<figure class="mpv-thumb" data-photo-index="' + i + '">' +
-          '<img loading="lazy" src="' + esc(src) + '" alt="' + esc(p.caption || '') + '">' +
+          '<img loading="lazy" draggable="false" src="' + esc(src) + '" alt="' + esc(p.caption || '') + '">' +
           (p.caption ? '<figcaption>' + esc(p.caption) + '</figcaption>' : '') + '</figure>');
       });
       html.push('</div></section>');
@@ -95,6 +96,10 @@
         if (self.opts['on' + cap(a)]) self.opts['on' + cap(a)](feature);
       });
     });
+    var closeBtn = this.el.querySelector('.mpv-detail__close');
+    if (closeBtn) closeBtn.addEventListener('click', function () {
+      if (self.opts.onClose) self.opts.onClose(feature);
+    });
     var elevBtn = this.el.querySelector('[data-elev="get"]');
     if (elevBtn) elevBtn.addEventListener('click', function () { self._fetchElevation(feature, elevBtn); });
   };
@@ -116,7 +121,7 @@
       save.className = 'mpv-mini';
       save.textContent = tr('elevationSave');
       save.addEventListener('click', function () {
-        if (self.opts.onSaveProperty) self.opts.onSaveProperty(feature, tr('elevationPropKey'), res.elevation);
+        if (self.opts.onSaveProperty) self.opts.onSaveProperty(feature, elevationKey(feature), res.elevation);
       });
       out.appendChild(save);
     }).catch(function (e) {
@@ -137,7 +142,7 @@
     box.innerHTML =
       '<div class="mpv-lightbox__inner">' +
       '<button class="mpv-lightbox__close" aria-label="' + esc(tr('close')) + '">x</button>' +
-      '<img src="' + esc(src) + '" alt="">' +
+      '<img draggable="false" src="' + esc(src) + '" alt="">' +
       (info.length ? '<div class="mpv-lightbox__cap">' + info.join(' ／ ') + '</div>' : '') +
       '</div>';
     function close() { if (box.parentNode) box.parentNode.removeChild(box); document.removeEventListener('keydown', onKey); }
@@ -163,6 +168,16 @@
         return out;
       })
       .catch(function () { return {}; });
+  }
+
+  /* 標高を保存する表示項目名。別の表示言語で保存済みの項目があればそれを更新し、項目の重複を避ける。 */
+  var ELEVATION_KEYS = ['標高(m)', 'Elevation (m)'];
+  function elevationKey(feature) {
+    var props = feature.properties || {};
+    for (var i = 0; i < ELEVATION_KEYS.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(props, ELEVATION_KEYS[i])) return ELEVATION_KEYS[i];
+    }
+    return tr('elevationPropKey');
   }
 
   function coordSummary(feature, m) {

@@ -42,7 +42,7 @@ test('parseCSV: 基本列と表示項目列を点として取り込む', () => {
 
 test('parseCSV: 日本語見出し・BOM・CRLF・引用符内改行に対応する', () => {
   const Store = newStore();
-  const doc = Store.parseCSV('﻿名称,緯度,経度,メモ\r\n観測点,35.1,139.1,"1行目\n2行目"\r\n');
+  const doc = Store.parseCSV('\ufeff名称,緯度,経度,メモ\r\n観測点,35.1,139.1,"1行目\n2行目"\r\n');
   assert.equal(doc.features.length, 1);
   assert.equal(doc.features[0].name, '観測点');
   assert.deepEqual(doc.features[0].coordinates, [35.1, 139.1]);
@@ -120,4 +120,70 @@ test('parseCSV: UI.toCSV の出力を取り込める（点のラウンドトリ�
   assert.equal(doc.warnings.length, 1);
   assert.deepEqual(doc.features[0], orig[0]);
   assert.deepEqual(doc.features[1].properties, { 備考欄: 'x,y' });
+});
+
+test('parseCSV: type / 種別 列が形状種別でなければ、点として取り込み表示項目に残す', () => {
+  const Store = newStore();
+  const a = Store.parseCSV('名称,種別,緯度,経度\n第一小学校,小学校,35,139\n市民病院,病院,35.1,139.1');
+  assert.equal(a.warnings.length, 0);
+  assert.deepEqual(a.features.map(f => f.properties), [{ 種別: '小学校' }, { 種別: '病院' }]);
+
+  const b = Store.parseCSV('name,type,lat,lng\nA,school,35,139\nB,point,35,139\nC,Polygon,35,139\nD,,35,139\nE,面,35,139');
+  assert.deepEqual(b.features.map(f => f.name), ['A', 'B', 'D']);
+  assert.deepEqual(b.features.map(f => f.properties), [{ type: 'school' }, {}, {}]);
+  assert.equal(b.warnings.length, 2, 'polygon と 面 の行だけスキップ');
+});
+
+test('parseCSV: 同じ項目の別名が複数あるときは優先順で列を選ぶ', () => {
+  const Store = newStore();
+  const doc = Store.parseCSV('title,name,lat,lng\nT,N,35,139');
+  assert.equal(doc.features[0].name, 'N', 'name を title より優先');
+  assert.deepEqual(doc.features[0].properties, { title: 'T' });
+});
+
+test('parseCSV: Excelの区切り指定行(sep=)と、先頭の空白だけの行に対応する', () => {
+  const Store = newStore();
+  const sep = Store.parseCSV('sep=;\nname;lat;lng\nA, B;35;139\nbad;x;139');
+  assert.equal(sep.features[0].name, 'A, B');
+  assert.ok(sep.warnings[0].includes('4行目'), sep.warnings[0]);
+  const tsv = Store.parseCSV('   \nname\tlat\tlng\nA\t35\t139');
+  assert.equal(tsv.features.length, 1);
+});
+
+test('parseCSV: 警告の行番号は引用符内の改行を数えたファイル上の行を指す', () => {
+  const Store = newStore();
+  const doc = Store.parseCSV('name,lat,lng,note\nA,35,139,"1\n2\n3"\nB,x,139,');
+  assert.equal(doc.features.length, 1);
+  assert.ok(doc.warnings[0].includes('5行目'), doc.warnings[0]);
+});
+
+test('parseCSV: 閉じていない引用符はエラーにする（残り全体を1セルに飲み込まない）', () => {
+  const Store = newStore();
+  assert.throws(() => Store.parseCSV('name,lat,lng\n"A,35,139\nB,36,140\n'), /2行目/);
+});
+
+test('parseCSV: constructor のようなID・タグも通常どおり扱う', () => {
+  const Store = newStore();
+  const doc = Store.parseCSV('id,tag,lat,lng\nconstructor,toString,35,139\n__proto__,valueOf,36,140');
+  assert.equal(doc.warnings.length, 0);
+  assert.deepEqual(doc.features.map(f => f.id), ['constructor', '__proto__']);
+  assert.deepEqual(doc.tags.map(t => t.id), ['toString', 'valueOf']);
+});
+
+test('parseCSV: 電話番号や版番号のような値を数値化して壊さない', () => {
+  const Store = newStore();
+  const doc = Store.parseCSV('lat,lng,tel,ver,count\n35,139,+81312345678,1.10,12');
+  assert.deepEqual(doc.features[0].properties, { tel: '+81312345678', ver: '1.10', count: 12 });
+});
+
+test('parseCSV: IDの無い大量の行でも採番が行数に比例した時間で終わる', () => {
+  const Store = newStore();
+  const lines = ['lat,lng'];
+  for (let i = 0; i < 20000; i++) lines.push('35,139');
+  const t0 = Date.now();
+  const doc = Store.parseCSV(lines.join('\n'));
+  const ms = Date.now() - t0;
+  assert.equal(doc.features.length, 20000);
+  assert.equal(doc.features[19999].id, 'p20000');
+  assert.ok(ms < 3000, '20000行で ' + ms + 'ms（採番が毎回1から探し直していると数十秒かかる）');
 });

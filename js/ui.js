@@ -181,7 +181,7 @@
       var listEl = modalEl.querySelector('#mpvPhotoEdit');
       function redraw() {
         listEl.innerHTML = photos.map(function (p, i) {
-          return '<div class="mpv-photo-item"><img src="' + esc(global.Detail.resolveSrc(p.src, ctx.meta)) + '">' +
+          return '<div class="mpv-photo-item"><img draggable="false" alt="" src="' + esc(global.Detail.resolveSrc(p.src, ctx.meta)) + '">' +
             '<input data-i="' + i + '" data-k="caption" placeholder="' + esc(tr('placeholderCaption')) + '" value="' + esc(p.caption || '') + '">' +
             '<button type="button" data-del="' + i + '" aria-label="' + esc(tr('delete')) + '">x</button></div>';
         }).join('');
@@ -268,15 +268,21 @@
     return '<select name="symbol">' + opts + '</select>';
   }
 
+  /* 「key: value」を1行1項目で解釈する。コロンの無い行は直前の項目の続き（複数行の値）として扱う。 */
   function parseProps(text) {
-    var o = {};
+    var raw = {}, last = null;
     (text || '').split('\n').forEach(function (line) {
       var i = line.indexOf(':');
-      if (i === -1) return;
-      var k = line.slice(0, i).trim();
-      if (!k) return;
-      o[k] = global.Util.parseScalar(line.slice(i + 1));
+      var k = i === -1 ? '' : line.slice(0, i).trim();
+      if (k) {
+        raw[k] = line.slice(i + 1);
+        last = k;
+      } else if (i === -1 && last != null && line.trim() !== '') {
+        raw[last] += '\n' + line;
+      }
     });
+    var o = {};
+    Object.keys(raw).forEach(function (k) { o[k] = global.Util.parseScalar(raw[k]); });
     return o;
   }
 
@@ -301,10 +307,12 @@
       closed = true;
       document.removeEventListener('keydown', onKey);
       if (back.parentNode) back.parentNode.removeChild(back);
+      if (!document.querySelector('.mpv-modal')) setBackgroundInert(false);
       if (onClose) onClose(submitted === true);
     }
     function onKey(e) {
       if (e.key !== 'Escape') return;
+      if (e.isComposing || e.keyCode === 229) return; // 日本語入力の変換取消のEscでは閉じない
       // 最前面のモーダルだけがEscに反応する
       var all = document.querySelectorAll('.mpv-modal');
       if (all[all.length - 1] === back) close(false);
@@ -313,8 +321,14 @@
     if (x) x.addEventListener('click', function () { close(false); });
     back.addEventListener('mousedown', function (e) { if (e.target === back) close(false); });
     document.addEventListener('keydown', onKey);
+    setBackgroundInert(true);
     document.body.appendChild(back);
     return { el: back, close: close };
+  }
+
+  /* ダイアログ表示中は背後（ヘッダ・サイドバー・地図）をTabキーやクリックで操作できないようにする */
+  function setBackgroundInert(on) {
+    document.querySelectorAll('.mpv-header, .mpv-layout').forEach(function (el) { el.inert = on; });
   }
 
   function dialogHeader(title) {

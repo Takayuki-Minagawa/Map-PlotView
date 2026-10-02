@@ -18,7 +18,7 @@ test('toCSV: 点の座標・カンマや引用符のエスケープ・改行の�
   const csv = UI.toCSV([
     { id: 'p1', type: 'point', tag: 'site', name: 'A, "quoted"', coordinates: [35.5, 139.5], note: 'line1\nline2' },
     { id: 'l1', type: 'line', tag: 'road', name: 'L', coordinates: [[35, 139], [36, 140]] }
-  ], { site: { id: 'site' } });
+  ]);
   const lines = csv.split('\n');
   assert.equal(lines[0], 'id,name,tag,type,lat,lng,note');
   assert.equal(lines[1], 'p1,"A, ""quoted""",site,point,35.5,139.5,line1 line2');
@@ -29,7 +29,7 @@ test('toCSV: CRLF改行のメモも1行に整形される', () => {
   const { UI } = newUI();
   const csv = UI.toCSV([
     { id: 'p1', type: 'point', tag: 't', name: 'A', coordinates: [35, 139], note: 'a\r\nb' }
-  ], {});
+  ]);
   assert.equal(csv.split('\n')[1], 'p1,A,t,point,35,139,a b');
 });
 
@@ -59,11 +59,24 @@ test('toCSV: 表示項目(properties)を追加列として出力する', () => {
 
 test('parseProps: key: value を解釈し、値の型を推定する', () => {
   const { UI } = newUI();
-  assert.deepEqual(UI.parseProps('用途: 商業施設\n階数: 12\nURL: https://example.com/a\n\nno-colon\n: novalue\n郵便番号: 0600001'), {
+  assert.deepEqual(UI.parseProps('用途: 商業施設\n階数: 12\nURL: https://example.com/a\n\n: novalue\n郵便番号: 0600001'), {
     用途: '商業施設',
     階数: 12,
     URL: 'https://example.com/a',
     郵便番号: '0600001'
   });
   assert.deepEqual(UI.parseProps(''), {});
+  assert.deepEqual(UI.parseProps('先頭の行にキーが無い\nk: v'), { k: 'v' });
+});
+
+test('parseProps: コロンの無い行は直前の項目の続きとして保持する（複数行の値を消さない）', () => {
+  const { UI } = newUI();
+  assert.deepEqual(UI.parseProps('備考: 1行目\n2行目\n\n3行目\n階数: 3'), { 備考: '1行目\n2行目\n3行目', 階数: 3 });
+});
+
+test('parseProps: 編集画面を開いて保存しても値が書き換わらない', () => {
+  const { UI, Util } = newUI();
+  const props = { tel: '+81312345678', ver: '1.10', code: '007', big: '12345678901234567890', n: 12, memo: 'a\nb' };
+  const text = Object.keys(props).map(k => k + ': ' + Util.formatVal(props[k])).join('\n'); // 編集画面の表示形式
+  assert.deepEqual(UI.parseProps(text), props);
 });

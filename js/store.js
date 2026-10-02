@@ -27,6 +27,15 @@
     return !!o && typeof o === 'object' && !Array.isArray(o) && !(o instanceof Date);
   }
 
+  /* プロトタイプ由来のキー（constructor, toString 等）と衝突しない参照表 */
+  function dict() { return Object.create(null); }
+
+  /* CSSへ埋め込んでよい色表記か（#hex / 色名 / rgb()・hsl()）。外部ファイル由来の値をstyle属性へ入れる前に確認する。 */
+  function isSafeColor(c) {
+    return typeof c === 'string' &&
+      /^(#[0-9a-f]{3,8}|[a-z]+|(rgb|hsl)a?\([0-9.,%\s/]+\))$/i.test(c.trim());
+  }
+
   function inLatRange(lat) { return isFiniteNumber(lat) && lat >= -90 && lat <= 90; }
   function inLngRange(lng) { return isFiniteNumber(lng) && lng >= -180 && lng <= 180; }
 
@@ -85,7 +94,14 @@
     var y = global.jsyaml;
     yamlSchemaCache = null;
     if (y && y.CORE_SCHEMA && typeof y.CORE_SCHEMA.extend === 'function') {
-      yamlSchemaCache = (y.types && y.types.merge) ? y.CORE_SCHEMA.extend({ implicit: [y.types.merge] }) : y.CORE_SCHEMA;
+      // 既定スキーマとの差は「タイムスタンプの暗黙変換をしない」ことだけにする。
+      // !!timestamp / !!binary など明示タグ付きの値は従来どおり読めるよう explicit に残す。
+      var t = y.types || {};
+      var only = function (list) { return list.filter(Boolean); };
+      yamlSchemaCache = y.CORE_SCHEMA.extend({
+        implicit: only([t.merge]),
+        explicit: only([t.binary, t.omap, t.pairs, t.set, t.timestamp])
+      });
     }
     return yamlSchemaCache;
   }
@@ -144,7 +160,7 @@
     var view = normalizeView(doc.view);
 
     var tags = [];
-    var tagIds = {};
+    var tagIds = dict();
     (Array.isArray(doc.tags) ? doc.tags : []).forEach(function (t, idx) {
       if (!isPlainObject(t) || t.id == null || t.id === '') {
         warnings.push(tr('warningTagInvalid', { index: idx }));
@@ -156,7 +172,12 @@
         return;
       }
       tagIds[id] = true;
-      tags.push(typeof t.id === 'string' ? t : Object.assign({}, t, { id: id }));
+      var tag = Object.assign({}, t, { id: id });
+      if (tag.color != null && !isSafeColor(tag.color)) {
+        warnings.push(tr('warningTagColor', { index: idx, id: id }));
+        delete tag.color; // 描画側の既定色を使う
+      }
+      tags.push(tag);
     });
 
     var rawFeatures = Array.isArray(doc.features) ? doc.features : [];
@@ -191,11 +212,11 @@
   var TAG_PALETTE = ['#2e7d32', '#1565c0', '#ef6c00', '#6a1b9a', '#c62828', '#00838f', '#9e9d24', '#4e342e'];
 
   /* GeoJSONテキスト → 内部構造。parseYamlと同じ形 {meta, view, tags, features, warnings} を返す。
-   * viewはnull（現在の表示位置を維持）。properties.tag からタグを自動生成する。 */
+   * viewはnull（表示位置の情報を持たない。呼び出し側で全体表示などを行う）。properties.tag からタグを自動生成する。 */
   function parseGeoJSON(text) {
     var doc;
     try {
-      doc = JSON.parse(text);
+      doc = JSON.parse(String(text == null ? '' : text).replace(/^\ufeff/, ''));
     } catch (e) {
       throw new Error(tr('geojsonSyntaxError', { message: e.message }));
     }
@@ -253,40 +274,50 @@
     id: ['id'],
     name: ['name', 'title', '名称', '名前'],
     tag: ['tag', 'タグ'],
-    type: ['type', '種別'],
+    type: ['type'],
     lat: ['lat', 'latitude', '緯度'],
     lng: ['lng', 'lon', 'long', 'longitude', '経度'],
     note: ['note', 'メモ', '備考']
   };
 
+  /* 本アプリのCSV出力が type 列に書く「点以外」の値。これらの行は形状を復元できないので取り込まない。 */
+  var CSV_NON_POINT_TYPES = ['line', 'polygon', '線', '面'];
+  var CSV_POINT_TYPES = ['', 'point', '点'];
+
   /* CSVテキスト → 内部構造（点のみ）。1行目を見出しとし、緯度・経度の列が必須。
    * 認識できない列は表示項目(properties)として取り込む。区切りは , ; タブを自動判定。 */
   function parseCSV(text) {
-    var src = String(text == null ? '' : text).replace(/^﻿/, '');
-    var rows = parseCSVRows(src, detectDelimiter(src));
+    var src = String(text == null ? '' : text).replace(/^\ufeff/, '');
+    // Excelが付ける区切り指定行（sep=;）があればそれに従う
+    var sep = /^sep=(.)\r?\n/i.exec(src);
+    if (sep) src = src.slice(sep[0].length);
+    var parsed = parseCSVRows(src, sep ? sep[1] : detectDelimiter(src));
+    var rows = parsed.rows;
+    var lineOf = function (i) { return parsed.lines[i] + (sep ? 1 : 0); };
     var header = null, headerRow = 0;
     for (var r = 0; r < rows.length; r++) {
       if (!isBlankRow(rows[r])) { header = rows[r]; headerRow = r; break; }
     }
     if (!header) throw new Error(tr('csvEmptyError'));
 
+    // 見出し → 列番号。同じ項目の別名が複数あるときは CSV_ALIASES の並び順（先頭ほど優先）で決める。
     var names = header.map(function (h) { return String(h).trim(); });
+    var lower = names.map(function (h) { return h.toLowerCase(); });
     var col = {};
-    names.forEach(function (h, i) {
-      var key = h.toLowerCase();
-      Object.keys(CSV_ALIASES).forEach(function (field) {
-        if (col[field] == null && CSV_ALIASES[field].indexOf(key) !== -1) col[field] = i;
-      });
+    Object.keys(CSV_ALIASES).forEach(function (field) {
+      for (var a = 0; a < CSV_ALIASES[field].length; a++) {
+        var i = lower.indexOf(CSV_ALIASES[field][a]);
+        if (i !== -1) { col[field] = i; return; }
+      }
     });
     if (col.lat == null || col.lng == null) throw new Error(tr('csvNoLatLngError'));
-    var fieldCols = Object.keys(col).map(function (k) { return col[k]; });
 
     var cell = function (row, field) {
       return col[field] == null ? '' : String(row[col[field]] == null ? '' : row[col[field]]).trim();
     };
     var dataRows = [];
     rows.forEach(function (row, i) {
-      if (i > headerRow && !isBlankRow(row)) dataRows.push({ row: row, line: i + 1 });
+      if (i > headerRow && !isBlankRow(row)) dataRows.push({ row: row, line: lineOf(i) });
     });
     if (!dataRows.length) throw new Error(tr('csvEmptyError'));
 
@@ -295,12 +326,14 @@
     var ids = createIdAllocator(dataRows.map(function (d) { return cell(d.row, 'id'); }));
     dataRows.forEach(function (d) {
       var row = d.row;
-      var type = cell(row, 'type').toLowerCase();
-      if (type && type !== 'point' && type !== '点') {
+      var type = cell(row, 'type');
+      if (CSV_NON_POINT_TYPES.indexOf(type.toLowerCase()) !== -1) {
         // 線・面は代表点しか持たないため復元できない
         warnings.push(tr('warningCsvNonPoint', { row: d.line, type: type }));
         return;
       }
+      // type列が形状種別でない値（「小学校」等の分類）なら、ふつうの表示項目として扱う
+      var typeIsProperty = CSV_POINT_TYPES.indexOf(type.toLowerCase()) === -1;
       var f = {
         id: cell(row, 'id') || undefined,
         type: 'point',
@@ -312,7 +345,9 @@
       var note = cell(row, 'note');
       if (note) f.note = note;
       names.forEach(function (h, i) {
-        if (!h || fieldCols.indexOf(i) !== -1) return;
+        if (!h) return;
+        var isField = Object.keys(col).some(function (k) { return col[k] === i; });
+        if (isField && !(i === col.type && typeIsProperty)) return;
         var v = String(row[i] == null ? '' : row[i]).trim();
         if (v !== '') f.properties[h] = global.Util.parseScalar(v);
       });
@@ -334,29 +369,32 @@
     return row.every(function (c) { return String(c).trim() === ''; });
   }
 
-  /* 見出し行に最も多く現れる区切り文字を採用（引用符の外側のみ数える） */
+  /* 最初の空でない行（見出し行）に最も多く現れる区切り文字を採用（引用符の外側のみ数える） */
   function detectDelimiter(text) {
     var counts = { ',': 0, '\t': 0, ';': 0 };
     var inQuote = false, seen = false;
     for (var i = 0; i < text.length; i++) {
       var ch = text[i];
       if (!inQuote && (ch === '\n' || ch === '\r')) {
-        if (seen) break; // 先頭の空行は読み飛ばす
+        if (seen) break; // 空白だけの行は読み飛ばす
+        counts[','] = counts['\t'] = counts[';'] = 0;
         continue;
       }
-      seen = true;
-      if (ch === '"') inQuote = !inQuote;
+      if (ch === '"') { inQuote = !inQuote; seen = true; }
       else if (!inQuote && counts[ch] != null) counts[ch]++;
+      else if (ch !== ' ') seen = true;
     }
     if (counts['\t'] > counts[','] && counts['\t'] >= counts[';']) return '\t';
     if (counts[';'] > counts[',']) return ';';
     return ',';
   }
 
-  /* RFC 4180 準拠のCSV分解（引用符内の区切り・改行・"" エスケープに対応）。行の配列を返す。 */
+  /* RFC 4180 準拠のCSV分解（引用符内の区切り・改行・"" エスケープに対応）。
+   * {rows: 行の配列, lines: 各行が始まるファイル上の行番号(1始まり)} を返す。閉じていない引用符はthrow。 */
   function parseCSVRows(text, delim) {
-    var rows = [], row = [], cell = '';
+    var rows = [], lines = [], row = [], cell = '';
     var inQuote = false, i = 0, n = text.length;
+    var line = 1, rowLine = 1, quoteLine = 0;
     while (i < n) {
       var ch = text[i];
       if (inQuote) {
@@ -364,31 +402,34 @@
           if (text[i + 1] === '"') { cell += '"'; i += 2; continue; }
           inQuote = false;
         } else {
+          if (ch === '\n' || (ch === '\r' && text[i + 1] !== '\n')) line++;
           cell += ch;
         }
         i++;
         continue;
       }
-      if (ch === '"' && cell === '') { inQuote = true; i++; continue; }
+      if (ch === '"' && cell === '') { inQuote = true; quoteLine = line; i++; continue; }
       if (ch === delim) { row.push(cell); cell = ''; i++; continue; }
       if (ch === '\r' || ch === '\n') {
         if (ch === '\r' && text[i + 1] === '\n') i++;
-        row.push(cell); rows.push(row);
+        row.push(cell); rows.push(row); lines.push(rowLine);
         row = []; cell = '';
+        line++; rowLine = line;
         i++;
         continue;
       }
       cell += ch;
       i++;
     }
-    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
-    return rows;
+    if (inQuote) throw new Error(tr('csvUnclosedQuoteError', { row: quoteLine }));
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); lines.push(rowLine); }
+    return { rows: rows, lines: lines };
   }
 
   /* features に現れたタグIDからタグ定義を自動生成 */
   function tagsFromFeatures(features) {
     var tags = [];
-    var seen = {};
+    var seen = dict();
     features.forEach(function (f) {
       if (seen[f.tag]) return;
       seen[f.tag] = true;
@@ -400,40 +441,52 @@
 
   /* IDの採番と重複解消。reserved は入力中に現れる全ID（自動採番がそれらと衝突しないよう予約する）。 */
   function createIdAllocator(reserved) {
-    var used = {};
-    var assigned = {};
+    var used = dict();
+    var assigned = dict();
+    var next = dict(); // プレフィクスごとの次の候補番号（毎回1から探し直さない）
     (reserved || []).forEach(function (id) {
       if (id != null && id !== '') used[String(id)] = true;
     });
+    function allocate(type) {
+      var p = idPrefix(type);
+      var n = next[p] || 1;
+      while (used[formatId(p, n)]) n++;
+      next[p] = n + 1;
+      used[formatId(p, n)] = true;
+      return formatId(p, n);
+    }
     return {
+      /* 未使用のIDを新しく採番する */
+      allocate: allocate,
       /* f.id が未設定、または採用済みIDと重複していれば採番し直す。重複していた場合は元のIDを返す。 */
       ensure: function (f) {
         var dup = null;
         if (f.id == null || f.id === '') {
-          f.id = nextFreeId(f.type, used);
+          f.id = allocate(f.type);
         } else if (assigned[f.id]) {
           dup = f.id;
-          f.id = nextFreeId(f.type, used);
+          f.id = allocate(f.type);
         }
         used[f.id] = true;
         return dup;
       },
-      commit: function (id) { assigned[id] = true; }
+      commit: function (id) { assigned[id] = true; },
+      isAssigned: function (id) { return !!assigned[id]; }
     };
   }
 
+  function idPrefix(type) { return type === 'point' ? 'p' : type === 'line' ? 'l' : 'g'; }
+  function formatId(prefix, n) { return prefix + (n < 100 ? ('00' + n).slice(-3) : String(n)); }
+
   /* type別プレフィクス(p/l/g)＋連番で、usedIds（オブジェクトまたはMap）と衝突しないIDを返す */
   function nextFreeId(type, usedIds) {
-    var p = (type === 'point' ? 'p' : type === 'line' ? 'l' : 'g');
+    var p = idPrefix(type);
     var has = (usedIds instanceof Map)
       ? function (id) { return usedIds.has(id); }
-      : function (id) { return !!(usedIds && usedIds[id]); };
-    var n = 1, id;
-    do {
-      id = p + (n < 100 ? ('00' + n).slice(-3) : String(n));
-      n++;
-    } while (has(id));
-    return id;
+      : function (id) { return !!usedIds && Object.prototype.hasOwnProperty.call(usedIds, id) && !!usedIds[id]; };
+    var n = 1;
+    while (has(formatId(p, n))) n++;
+    return formatId(p, n);
   }
 
   /* 既存データへ取込データを追加する。current/incoming とも {tags:[], features:[]}。
@@ -441,25 +494,23 @@
   function mergeData(current, incoming) {
     var warnings = (incoming.warnings || []).slice();
     var tags = current.tags.slice();
-    var tagIds = {};
+    var tagIds = dict();
     tags.forEach(function (t) { tagIds[t.id] = true; });
     incoming.tags.forEach(function (t) {
       if (!tagIds[t.id]) { tagIds[t.id] = true; tags.push(t); }
     });
 
-    var used = {};
-    var taken = {};
-    current.features.forEach(function (f) { used[f.id] = true; taken[f.id] = true; });
-    incoming.features.forEach(function (f) { used[f.id] = true; });
+    // 既存・取込の両方のIDを予約し、衝突した取込フィーチャだけを採番し直す
+    var ids = createIdAllocator(current.features.concat(incoming.features).map(function (f) { return f.id; }));
+    current.features.forEach(function (f) { ids.commit(f.id); });
     var features = current.features.slice();
     incoming.features.forEach(function (f) {
-      if (taken[f.id]) {
-        var newId = nextFreeId(f.type, used);
-        used[newId] = true;
+      if (ids.isAssigned(f.id)) {
+        var newId = ids.allocate(f.type);
         warnings.push(tr('warningMergeDuplicateId', { id: f.id, newId: newId }));
         f = Object.assign({}, f, { id: newId });
       }
-      taken[f.id] = true;
+      ids.commit(f.id);
       features.push(f);
     });
     return { tags: tags, features: features, warnings: warnings };
@@ -519,10 +570,12 @@
       });
       geom = { type: 'Polygon', coordinates: rings };
     }
+    var base = { id: feature.id, name: feature.name, tag: feature.tag, _type: feature.type };
     return {
       type: 'Feature',
       id: feature.id,
-      properties: Object.assign({ id: feature.id, name: feature.name, tag: feature.tag, _type: feature.type }, feature.properties || {}),
+      // 基本キーは表示項目に同名のキーがあっても上書きさせない（読込側は基本キーを表示項目から除外する）
+      properties: Object.assign({}, base, feature.properties || {}, base),
       geometry: geom
     };
   }
@@ -567,6 +620,7 @@
     DEFAULT_VIEW: DEFAULT_VIEW,
     UNCATEGORIZED_ID: UNCATEGORIZED_ID,
     uncategorizedTag: uncategorizedTag,
+    isSafeColor: isSafeColor,
     validateFeature: validateFeature,
     parseYaml: parseYaml,
     parseGeoJSON: parseGeoJSON,

@@ -23,9 +23,13 @@
   var mapOnlyMode = false;
   var searchQuery = '';
   var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
+  var drawShape = null;          // 作図中のGeoman図形名（'Marker' | 'Line' | 'Polygon'）
   var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
   var geomEditId = null;         // 形状編集中のfeatureId
   var placeSearchSeq = 0;        // 場所検索の世代番号（古い応答を捨てる）
+  var autoMapOnly = false;       // 狭い画面でセッション開始時に自動で「地図のみ」へ切り替えたか
+  var autosaveFailed = false;    // 直近の自動保存に失敗したか（ステータスに出し続ける）
+  var NARROW_SCREEN = '(max-width: 860px)'; // style.css のパネル重ね表示と同じ境界
   var Store = global.Store;
   var UNCAT = Store.UNCATEGORIZED_ID;
   var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
@@ -33,7 +37,9 @@
   function tagsArray() { return Array.from(state.tags.values()); }
   function featuresArray() { return Array.from(state.features.values()); }
   function tagsById() {
-    var o = {}; state.tags.forEach(function (t, k) { o[k] = t; }); return o;
+    var o = Object.create(null); // タグIDが constructor 等でもプロトタイプと衝突させない
+    state.tags.forEach(function (t, k) { o[k] = t; });
+    return o;
   }
   function isHidden(feature) { return state.hiddenTags.has(feature.tag); }
 
@@ -50,7 +56,8 @@
       onReshape: function (f) { beginGeometryEdit(f.id); },
       onEdit: function (f) { editFeature(f); },
       onDelete: function (f) { deleteFeature(f.id); },
-      onSaveProperty: saveFeatureProperty
+      onSaveProperty: saveFeatureProperty,
+      onClose: closeDetail
     });
     detail.clearDetail();
 
@@ -99,6 +106,7 @@
       return;
     }
     if (!state.features.size && !state.tags.size) {
+      recordHistory(); // 空の状態からの読込も履歴に残す（やり直し履歴に古い状態を残さない）
       applyParsed(parsed);
       return;
     }
@@ -239,18 +247,22 @@
     state.selection.ids = state.selection.ids.filter(function (id) { return state.features.has(id); });
     if (!state.features.has(state.activeFeatureId)) state.activeFeatureId = null;
     refreshAll();
+    ui.showWarnings([]); // 読込時の注意は取り消した読込のものかもしれないので消す
     updateHistoryButtons();
     autosave();
   }
 
+  /* 作図・矩形選択・形状編集の最中は、作業中の内容を巻き込まないよう履歴操作を受け付けない */
   function undo() {
     if (!undoHistory.canUndo()) return;
+    if (sessionActive()) { setStatus(tr('sessionBusy')); return; }
     restoreSnapshot(undoHistory.undo(snapshot()));
     setStatus(tr('undone'));
   }
 
   function redo() {
     if (!undoHistory.canRedo()) return;
+    if (sessionActive()) { setStatus(tr('sessionBusy')); return; }
     restoreSnapshot(undoHistory.redo(snapshot()));
     setStatus(tr('redone'));
   }
@@ -310,6 +322,14 @@
     state.activeFeatureId = id;
     showActiveDetail();
     mapview.focusFeature(id);
+    renderLists();
+  }
+
+  /* 詳細ビューを閉じて選択を解除する */
+  function closeDetail() {
+    cancelGeometryEdit();
+    state.activeFeatureId = null;
+    detail.clearDetail();
     renderLists();
   }
 
@@ -400,6 +420,23 @@
     cancelGeometryEdit();
   }
 
+  function sessionActive() {
+    return !!drawCreateHandler || !!rectCleanup || geomEditId != null;
+  }
+
+  /* 狭い画面ではサイドバーと詳細が地図に重なるため、地図上で操作するセッションの間だけ「地図のみ」にする */
+  function enterSessionView() {
+    if (mapOnlyMode || !global.matchMedia || !global.matchMedia(NARROW_SCREEN).matches) return;
+    autoMapOnly = true;
+    setMapOnlyMode(true);
+  }
+
+  function leaveSessionView() {
+    if (!autoMapOnly) return;
+    autoMapOnly = false;
+    setMapOnlyMode(false);
+  }
+
   /* ---- 作図（Geomanがあれば利用） ---- */
   function addFeatureByType(type) {
     if (!mapview.map.pm) {
@@ -408,7 +445,9 @@
     }
     // 既存のセッションを解除してから開始（ハンドラ積み増しを防止）
     cancelSessions();
+    enterSessionView();
     var shape = { point: 'Marker', line: 'Line', polygon: 'Polygon' }[type];
+    drawShape = shape;
     drawCreateHandler = function (e) {
       var coords = global.MapView.layerToCoords(type, e.layer);
       mapview.map.removeLayer(e.layer); // 一旦削除し内部管理レイヤとして再生成
@@ -440,15 +479,32 @@
   }
 
   function cancelDraw() {
-    if (drawCreateHandler && mapview.map.pm) {
+    if (!drawCreateHandler) return;
+    if (mapview.map.pm) {
       mapview.map.off('pm:create', drawCreateHandler);
       mapview.map.pm.disableDraw();
     }
     drawCreateHandler = null;
+    drawShape = null;
+    leaveSessionView();
+  }
+
+  /* 作図中の線/面から最後に置いた頂点を1つ取り消す（Ctrl+Z）。点の作図では何もしない。 */
+  function removeLastDrawVertex() {
+    var pm = mapview.map.pm;
+    var draw = pm && pm.Draw && pm.Draw[drawShape];
+    if (!draw || typeof draw._removeLastVertex !== 'function') return;
+    draw._removeLastVertex();
+    // 頂点が無くなるとGeoman側で作図が終了するので、こちらのセッション状態も合わせる
+    // （続けてCtrl+Zを押すと通常の「元に戻す」になるので、作図が終わったことを明示する）
+    if (pm.globalDrawModeEnabled && !pm.globalDrawModeEnabled()) { cancelDraw(); setStatus(tr('drawCancelled')); }
   }
 
   function cancelRectSelect() {
-    if (rectCleanup) { rectCleanup(); rectCleanup = null; }
+    if (!rectCleanup) return;
+    rectCleanup();
+    rectCleanup = null;
+    leaveSessionView();
   }
 
   function syncSystemTagLabels() {
@@ -470,6 +526,9 @@
       return;
     }
     geomEditId = id;
+    // 押したボタンにフォーカスが残っていると、確定のEnterがボタンの再クリックになってしまう
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    enterSessionView();
     showEditBar(true);
     setStatus(tr(f.type === 'point' ? 'reshapeHintPoint' : 'reshapeHintShape'));
   }
@@ -489,7 +548,7 @@
       alert(tr('reshapeInvalid', { errors: v.errors.join(' / ') }));
       return;
     }
-    if (JSON.stringify(coords) === JSON.stringify(roundDeep(f.coordinates))) {
+    if (JSON.stringify(coords) === JSON.stringify(comparableCoords(f))) {
       rerenderFeature(f);
       setStatus('');
       return;
@@ -510,6 +569,7 @@
     mapview.stopGeometryEdit();
     geomEditId = null;
     showEditBar(false);
+    leaveSessionView();
   }
 
   function showEditBar(visible) {
@@ -521,13 +581,27 @@
     return Array.isArray(c) ? c.map(roundDeep) : round(c);
   }
 
+  /* 保存済み座標を getEditedCoords と同じ表現（丸め済み・面のリングは開いた形）へ揃える。
+   * 手書きYAMLの閉じたリング（始点＝終点）を「変更あり」と誤判定しないため。 */
+  function comparableCoords(f) {
+    var c = roundDeep(f.coordinates);
+    if (f.type !== 'polygon') return c;
+    return c.map(function (ring) {
+      var n = ring.length;
+      var closed = n > 3 && ring[0][0] === ring[n - 1][0] && ring[0][1] === ring[n - 1][1];
+      return closed ? ring.slice(0, -1) : ring;
+    });
+  }
+
   /* ---- 矩形範囲抽出（R9） ---- */
   function beginRectSelect() {
     // 進行中のセッションを解除（リスナ積み増し・残留矩形を防止）
     cancelSessions();
+    enterSessionView();
     setStatus(tr('dragRect'));
     rectCleanup = mapview.startRectangleSelect(function (rectGeoJSON) {
       rectCleanup = null; // ドラッグ完了でセッション終了（内部cleanupは実行済み）
+      leaveSessionView();
       state.selection.rect = rectGeoJSON;
       var ids = global.Select.selectInBounds(rectGeoJSON, featuresArray(), {
         mode: selectMode,
@@ -603,8 +677,9 @@
     on('btnLoadSample', 'click', loadSample);
     on('btnUndo', 'click', undo);
     on('btnRedo', 'click', redo);
-    on('btnMapOnlyToggle', 'click', function () { setMapOnlyMode(!mapOnlyMode); });
-    on('btnMapOnlyRestore', 'click', function () { setMapOnlyMode(false); });
+    // 手動で切り替えたら、セッション終了時の自動復帰はしない
+    on('btnMapOnlyToggle', 'click', function () { autoMapOnly = false; setMapOnlyMode(!mapOnlyMode); });
+    on('btnMapOnlyRestore', 'click', function () { autoMapOnly = false; setMapOnlyMode(false); });
 
     on('btnAddTag', 'click', function () { ui.openTagEditor(null, saveTag); });
     on('btnAddPoint', 'click', function () { addFeatureByType('point'); });
@@ -624,7 +699,7 @@
     });
     on('btnExportSelCsv', 'click', function () {
       // BOM付与でExcelの文字化けを防ぐ
-      download('selection.csv', '﻿' + global.UI.toCSV(selectionFeatures()), 'text/csv;charset=utf-8');
+      download('selection.csv', '\ufeff' + global.UI.toCSV(selectionFeatures()), 'text/csv;charset=utf-8');
     });
 
     on('btnFitAll', 'click', function () { mapview.fitAllFeatures(); });
@@ -668,12 +743,14 @@
 
   function onKeyDown(e) {
     if (document.querySelector('.mpv-modal, .mpv-lightbox')) return; // モーダル表示中は干渉しない
+    if (e.isComposing || e.keyCode === 229) return;                  // 日本語入力の変換操作には反応しない
     var mod = (e.ctrlKey || e.metaKey) && !e.altKey;
     var key = String(e.key || '').toLowerCase();
     if (mod && (key === 'z' || key === 'y')) {
       if (isTextEntry(e.target)) return; // 入力欄ではブラウザ標準の取り消しを優先
       e.preventDefault();
-      if (key === 'y' || e.shiftKey) redo();
+      if (drawCreateHandler && key === 'z' && !e.shiftKey) removeLastDrawVertex();
+      else if (key === 'y' || e.shiftKey) redo();
       else undo();
       return;
     }
@@ -686,7 +763,7 @@
     if (geomEditId != null) { cancelGeometryEdit(); return; }
     if (drawCreateHandler) { cancelDraw(); setStatus(''); return; }
     if (rectCleanup) { cancelRectSelect(); setStatus(''); return; }
-    if (mapOnlyMode) setMapOnlyMode(false);
+    if (mapOnlyMode) { autoMapOnly = false; setMapOnlyMode(false); }
   }
 
   /* 文字入力を受け付ける要素か（チェックボックス等のinputは除く） */
@@ -706,7 +783,7 @@
 
   /* ファイルのドラッグ&ドロップ読込。ページ外への遷移（ブラウザ既定動作）も防ぐ。 */
   function wireDropZone() {
-    var depth = 0;
+    var hideTimer = null;
     function hasFiles(e) {
       var types = e.dataTransfer && e.dataTransfer.types;
       return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
@@ -715,29 +792,27 @@
     function isModalOpen() { return !!document.querySelector('.mpv-modal, .mpv-lightbox'); }
     function isFileInput(e) { return !!(e.target && e.target.closest && e.target.closest('input[type="file"]')); }
 
-    window.addEventListener('dragenter', function (e) {
-      if (!hasFiles(e)) return;
-      depth++;
-      if (!isModalOpen()) setDropping(true);
-    });
-    window.addEventListener('dragleave', function (e) {
-      if (!hasFiles(e)) return;
-      depth = Math.max(0, depth - 1);
-      if (!depth) setDropping(false);
-    });
+    // dragover はページ上にいる間くり返し発生する。途絶えたら（ページ外へ出たら）案内を消す。
+    // dragenter/dragleave の回数を数える方式は、取りこぼしで案内が残ることがあるため使わない。
     window.addEventListener('dragover', function (e) {
       if (!hasFiles(e) || isFileInput(e)) return; // 写真のファイル入力へのドロップはブラウザに任せる
       e.preventDefault();
-      e.dataTransfer.dropEffect = isModalOpen() ? 'none' : 'copy';
+      if (isModalOpen()) { e.dataTransfer.dropEffect = 'none'; return; }
+      e.dataTransfer.dropEffect = 'copy';
+      setDropping(true);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(function () { setDropping(false); }, 600);
     });
     window.addEventListener('drop', function (e) {
-      depth = 0;
+      clearTimeout(hideTimer);
       setDropping(false);
       if (!hasFiles(e) || isFileInput(e)) return;
       e.preventDefault();
       if (isModalOpen()) return;
-      var file = e.dataTransfer.files && e.dataTransfer.files[0];
-      if (file) loadFile(file);
+      var files = e.dataTransfer.files;
+      if (!files || !files.length) return;
+      loadFile(files[0]);
+      if (files.length > 1) setStatus(tr('dropFirstOnly', { name: files[0].name }));
     });
   }
 
@@ -803,10 +878,12 @@
   function autosave() {
     try {
       localStorage.setItem(LS_KEY, exportYaml());
+      autosaveFailed = false;
     } catch (e) {
-      // 容量超過（埋め込み写真が多い等）。編集は続けられるが退避されないことを知らせる
-      setStatus(tr('autosaveFailed'));
+      // 容量超過（埋め込み写真が多い等）。編集は続けられるが退避されないことを知らせ続ける
+      autosaveFailed = true;
     }
+    setStatus(lastStatus);
   }
 
   function restoreAutosave() {
@@ -825,9 +902,14 @@
     var el = document.getElementById(id);
     if (el) el.addEventListener(ev, fn);
   }
+  var lastStatus = '';
   function setStatus(msg) {
+    lastStatus = msg || '';
     var el = document.getElementById('status');
-    if (el) el.textContent = msg || '';
+    if (!el) return;
+    // 自動保存の失敗は、後続のメッセージで上書きされて見落とさないよう常に併記する
+    var parts = [lastStatus, autosaveFailed ? tr('autosaveFailed') : ''].filter(Boolean);
+    el.textContent = parts.join(' ／ ');
   }
   function round(n) { return global.Util.round(n); }
 

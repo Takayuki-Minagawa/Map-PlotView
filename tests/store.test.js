@@ -278,3 +278,65 @@ test('parseYaml: 入力のオブジェクトを書き換えない既定viewを�
   a.view.zoom = 3;
   assert.equal(Store.DEFAULT_VIEW.zoom, 13, 'DEFAULT_VIEW は共有されない');
 });
+
+test('parseYaml: constructor / toString のようなID・タグを重複や定義済みと誤判定しない', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'tags:',
+    '  - { id: constructor, name: C }',
+    '  - { id: toString, name: T }',
+    'features:',
+    '  - { id: constructor, type: point, tag: constructor, coordinates: [35, 139] }',
+    '  - { id: hasOwnProperty, type: point, tag: valueOf, coordinates: [35, 139] }'
+  ].join('\n'));
+  assert.deepEqual(doc.tags.map(t => t.id), ['constructor', 'toString', '__uncategorized__']);
+  assert.deepEqual(doc.features.map(f => f.id), ['constructor', 'hasOwnProperty']);
+  assert.equal(doc.features[0].tag, 'constructor');
+  assert.equal(doc.features[1].tag, '__uncategorized__', '未定義タグ valueOf は未分類へ');
+  assert.equal(doc.warnings.length, 1);
+});
+
+test('parseYaml: CSSとして不正なタグ色は捨てて警告する', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'tags:',
+    '  - { id: a, color: "#2e7d32" }',
+    '  - { id: b, color: red }',
+    '  - { id: c, color: "rgb(10, 20, 30)" }',
+    '  - { id: d, color: "red;background-image:url(https://example.com/x)" }',
+    '  - { id: e, color: 123 }',
+    '  - { id: f }'
+  ].join('\n'));
+  assert.deepEqual(doc.tags.map(t => t.color), ['#2e7d32', 'red', 'rgb(10, 20, 30)', undefined, undefined, undefined]);
+  assert.equal(doc.warnings.length, 2);
+  assert.equal(Store.isSafeColor('#fff'), true);
+  assert.equal(Store.isSafeColor('url(x)'), false);
+  assert.equal(Store.isSafeColor('var(--x)'), false);
+  assert.equal(Store.isSafeColor(null), false);
+});
+
+test('parseYaml: 明示タグ付きの値（!!timestamp 等）も読み込める', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'meta:',
+    '  made: !!timestamp 2026-01-02T03:04:05Z',
+    '  items: !!set { a, b }',
+    'features: []'
+  ].join('\n'));
+  assert.ok(doc.meta.made instanceof Date, '明示した場合のみDateになる');
+  assert.equal(doc.meta.made.toISOString(), '2026-01-02T03:04:05.000Z');
+  const again = Store.parseYaml(Store.dumpYaml({ meta: doc.meta, tags: [], features: [] }));
+  assert.equal(again.meta.made.toISOString(), '2026-01-02T03:04:05.000Z', '保存→再読込でも保持');
+});
+
+test('parseYaml: マージキー(<<)が使える', () => {
+  const Store = newStore();
+  const doc = Store.parseYaml([
+    'base: &base { type: point, tag: a }',
+    'tags: [{ id: a }]',
+    'features:',
+    '  - { <<: *base, id: p1, coordinates: [35, 139] }'
+  ].join('\n'));
+  assert.equal(doc.features[0].type, 'point');
+  assert.equal(doc.features[0].tag, 'a');
+});

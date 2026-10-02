@@ -13,22 +13,28 @@
   function inLng(n) { return isFinite(n) && n >= -180 && n <= 180; }
 
   /* "35.681, 139.767" のような緯度経度の直接入力を解釈する。該当しなければnull。
+   * 全角の数字・カンマも受け付ける。"1,000" や "100 0001"（郵便番号）を座標と誤認しないよう、
+   * 少なくとも一方に小数点があることを条件とする。
    * 1つ目が緯度の範囲外で経度としてのみ成立する場合は「経度, 緯度」とみなして入れ替える。 */
   function parseLatLngQuery(query) {
-    var m = /^\s*([-+]?\d+(?:\.\d+)?)\s*(?:[,、\s])\s*([-+]?\d+(?:\.\d+)?)\s*$/.exec(String(query || ''));
-    if (!m) return null;
+    var q = String(query || '');
+    if (q.normalize) q = q.normalize('NFKC');
+    var m = /^\s*([-+]?\d+(?:\.\d+)?)\s*(?:[,、\s])\s*([-+]?\d+(?:\.\d+)?)\s*$/.exec(q);
+    if (!m || (m[1].indexOf('.') === -1 && m[2].indexOf('.') === -1)) return null;
     var a = parseFloat(m[1]), b = parseFloat(m[2]);
     if (inLat(a) && inLng(b)) return [a, b];
     if (inLng(a) && inLat(b)) return [b, a];
     return null;
   }
 
-  /* 住所検索APIの応答（GeoJSON Featureの配列）→ [{title, lat, lng}]。不正な要素は捨てる。 */
-  function parseAddressResults(json, limit) {
+  /* 住所検索APIの応答（GeoJSON Featureの配列）→ [{title, lat, lng}]。不正な要素は捨てる。
+   * query を渡すと名称の一致度順に並べ替えてから limit 件に絞る（APIの応答は一致度順ではなく、
+   * 例えば「東京駅」の本命が50件目以降に来るため）。 */
+  function parseAddressResults(json, limit, query) {
     var max = limit > 0 ? limit : DEFAULT_LIMIT;
     var out = [];
     if (!Array.isArray(json)) return out;
-    for (var i = 0; i < json.length && out.length < max; i++) {
+    for (var i = 0; i < json.length; i++) {
       var item = json[i];
       var c = item && item.geometry && item.geometry.coordinates;
       if (!Array.isArray(c) || typeof c[0] !== 'number' || typeof c[1] !== 'number') continue;
@@ -36,7 +42,21 @@
       var title = item.properties && item.properties.title;
       out.push({ title: title != null ? String(title) : '', lat: c[1], lng: c[0] });
     }
-    return out;
+    return rankByTitle(out, query).slice(0, max);
+  }
+
+  /* 完全一致 → 前方一致 → 部分一致 → その他 の順に安定ソートする */
+  function rankByTitle(results, query) {
+    var q = String(query || '').trim();
+    if (!q) return results;
+    var score = function (r) {
+      var i = r.title.indexOf(q);
+      return r.title === q ? 0 : i === 0 ? 1 : i > 0 ? 2 : 3;
+    };
+    return results
+      .map(function (r, i) { return { r: r, s: score(r), i: i }; })
+      .sort(function (a, b) { return a.s - b.s || a.i - b.i; })
+      .map(function (x) { return x.r; });
   }
 
   /* 住所・地名を検索して候補を返す。opts: { signal: AbortSignal, limit: 件数上限 } */
@@ -49,7 +69,7 @@
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
-      .then(function (json) { return parseAddressResults(json, opts.limit); });
+      .then(function (json) { return parseAddressResults(json, opts.limit, q); });
   }
 
   /* 標高APIの応答 → {elevation: m, source: データソース名}。データ無し（"-----"）はnull。 */
