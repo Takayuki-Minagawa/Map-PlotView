@@ -84,6 +84,7 @@
         if (mapview.map && mapview.map.closePopup) mapview.map.closePopup();
         mapview.clearSearchMarker(); // ポップアップ内のボタン文言が旧言語のまま残るため
         setStatus('');               // 旧言語のステータス文言を残さない
+        syncSessionBar();
         refreshAll();
         syncMapOnlyControls();
       });
@@ -270,8 +271,9 @@
   function updateHistoryButtons() {
     var u = document.getElementById('btnUndo');
     var r = document.getElementById('btnRedo');
-    if (u) u.disabled = !undoHistory.canUndo();
-    if (r) r.disabled = !undoHistory.canRedo();
+    var busy = sessionActive();
+    if (u) u.disabled = busy || !undoHistory.canUndo();
+    if (r) r.disabled = busy || !undoHistory.canRedo();
   }
 
   /* ---- 描画 ---- */
@@ -437,6 +439,19 @@
     setMapOnlyMode(false);
   }
 
+  /* 地図下部の操作バーと履歴ボタンを、進行中のセッションに合わせる。セッションの開始・終了のたびに呼ぶ。
+   * 「確定」は形状編集のときだけ出す（作図はGeomanの操作で、矩形選択はドラッグ完了で確定する）。 */
+  function syncSessionBar() {
+    var kind = geomEditId != null ? 'reshapeEditing' : drawCreateHandler ? 'drawingNow' : rectCleanup ? 'selectingNow' : null;
+    var bar = document.getElementById('editBar');
+    var label = document.getElementById('editBarLabel');
+    var done = document.getElementById('btnReshapeDone');
+    if (bar) bar.hidden = !kind;
+    if (label) label.textContent = kind ? tr(kind) : '';
+    if (done) done.hidden = kind !== 'reshapeEditing';
+    updateHistoryButtons();
+  }
+
   /* ---- 作図（Geomanがあれば利用） ---- */
   function addFeatureByType(type) {
     if (!mapview.map.pm) {
@@ -456,6 +471,7 @@
     };
     mapview.map.on('pm:create', drawCreateHandler);
     mapview.map.pm.enableDraw(shape, { snappable: true });
+    syncSessionBar();
   }
 
   /* 未確定の新規フィーチャをプレビュー描画して編集モーダルを開く。
@@ -469,6 +485,12 @@
       coordinates: coords,
       properties: {}
     };
+    // 保存後の再読込で捨てられる形状（±180°をまたぐ線など）は、ここで受け付けない
+    var v = Store.validateFeature(f);
+    if (!v.ok) {
+      alert(tr('drawInvalid', { errors: v.errors.join(' / ') }));
+      return;
+    }
     mapview.renderFeature(f, state.tags.get(f.tag));
     ui.openFeatureEditor(f, editorTags(), { meta: state.meta, isNew: true }, function (nf) {
       mapview.removeFeature(f.id);     // プレビュー除去（IDが変更された場合に備え元IDで）
@@ -487,6 +509,7 @@
     drawCreateHandler = null;
     drawShape = null;
     leaveSessionView();
+    syncSessionBar();
   }
 
   /* 作図中の線/面から最後に置いた頂点を1つ取り消す（Ctrl+Z）。点の作図では何もしない。 */
@@ -505,6 +528,7 @@
     rectCleanup();
     rectCleanup = null;
     leaveSessionView();
+    syncSessionBar();
   }
 
   function syncSystemTagLabels() {
@@ -529,7 +553,7 @@
     // 押したボタンにフォーカスが残っていると、確定のEnterがボタンの再クリックになってしまう
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     enterSessionView();
-    showEditBar(true);
+    syncSessionBar();
     setStatus(tr(f.type === 'point' ? 'reshapeHintPoint' : 'reshapeHintShape'));
   }
 
@@ -568,13 +592,8 @@
   function endGeometryEdit() {
     mapview.stopGeometryEdit();
     geomEditId = null;
-    showEditBar(false);
     leaveSessionView();
-  }
-
-  function showEditBar(visible) {
-    var bar = document.getElementById('editBar');
-    if (bar) bar.hidden = !visible;
+    syncSessionBar();
   }
 
   function roundDeep(c) {
@@ -602,6 +621,7 @@
     rectCleanup = mapview.startRectangleSelect(function (rectGeoJSON) {
       rectCleanup = null; // ドラッグ完了でセッション終了（内部cleanupは実行済み）
       leaveSessionView();
+      syncSessionBar();
       state.selection.rect = rectGeoJSON;
       var ids = global.Select.selectInBounds(rectGeoJSON, featuresArray(), {
         mode: selectMode,
@@ -612,6 +632,7 @@
       ui.renderSelectionList(selectionFeatures(), tagsById(), state.activeFeatureId);
       setStatus(tr('selectedStatus', { count: ids.length, mode: tr(selectMode === 'within' ? 'within' : 'intersect') }));
     });
+    syncSessionBar();
   }
 
   function clearSelection() {
@@ -725,7 +746,7 @@
 
     // 形状編集バー
     on('btnReshapeDone', 'click', finishGeometryEdit);
-    on('btnReshapeCancel', 'click', cancelGeometryEdit);
+    on('btnReshapeCancel', 'click', function () { cancelSessions(); setStatus(''); });
 
     // 背景レイヤ・オーバーレイ
     document.querySelectorAll('input[name="base"]').forEach(function (r) {
@@ -801,7 +822,8 @@
       e.dataTransfer.dropEffect = 'copy';
       setDropping(true);
       clearTimeout(hideTimer);
-      hideTimer = setTimeout(function () { setDropping(false); }, 600);
+      // dragover の間隔は仕様上 350±200ms。処理が詰まっても案内がちらつかない長さにする
+      hideTimer = setTimeout(function () { setDropping(false); }, 1000);
     });
     window.addEventListener('drop', function (e) {
       clearTimeout(hideTimer);

@@ -145,12 +145,17 @@
       '<img draggable="false" src="' + esc(src) + '" alt="">' +
       (info.length ? '<div class="mpv-lightbox__cap">' + info.join(' ／ ') + '</div>' : '') +
       '</div>';
-    function close() { if (box.parentNode) box.parentNode.removeChild(box); document.removeEventListener('keydown', onKey); }
+    function close() {
+      if (box.parentNode) box.parentNode.removeChild(box);
+      document.removeEventListener('keydown', onKey);
+      global.Util.syncBackgroundInert();
+    }
     function onKey(e) { if (e.key === 'Escape') close(); }
     box.addEventListener('click', function (e) { if (e.target === box) close(); });
     box.querySelector('.mpv-lightbox__close').addEventListener('click', close);
     document.addEventListener('keydown', onKey);
     document.body.appendChild(box);
+    global.Util.syncBackgroundInert();
   };
 
   /* exifrでEXIF（撮影日時・GPS）抽出。{takenAt, location} を返す。 */

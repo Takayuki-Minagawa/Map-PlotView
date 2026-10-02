@@ -132,8 +132,9 @@
     <main class="mpv-mapwrap">
       <div id="map"></div>
       <button id="btnLocate" class="mpv-map-btn" data-i18n-title="locate" data-i18n-aria="locate" title="現在地を表示" aria-label="現在地を表示">◎</button>
+      <!-- 作図・矩形選択・形状編集の最中に出す操作バー（タッチ端末でもEsc無しで取り消せるように） -->
       <div id="editBar" class="mpv-editbar" role="group" hidden>
-        <span data-i18n="reshapeEditing">形状を編集中</span>
+        <span id="editBarLabel"></span>
         <button id="btnReshapeDone" class="mpv-ok" data-i18n="reshapeConfirm">確定</button>
         <button id="btnReshapeCancel" data-i18n="cancel">キャンセル</button>
       </div>

@@ -307,7 +307,7 @@
       closed = true;
       document.removeEventListener('keydown', onKey);
       if (back.parentNode) back.parentNode.removeChild(back);
-      if (!document.querySelector('.mpv-modal')) setBackgroundInert(false);
+      global.Util.syncBackgroundInert();
       if (onClose) onClose(submitted === true);
     }
     function onKey(e) {
@@ -321,14 +321,9 @@
     if (x) x.addEventListener('click', function () { close(false); });
     back.addEventListener('mousedown', function (e) { if (e.target === back) close(false); });
     document.addEventListener('keydown', onKey);
-    setBackgroundInert(true);
     document.body.appendChild(back);
+    global.Util.syncBackgroundInert();
     return { el: back, close: close };
-  }
-
-  /* ダイアログ表示中は背後（ヘッダ・サイドバー・地図）をTabキーやクリックで操作できないようにする */
-  function setBackgroundInert(on) {
-    document.querySelectorAll('.mpv-header, .mpv-layout').forEach(function (el) { el.inert = on; });
   }
 
   function dialogHeader(title) {

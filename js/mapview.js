@@ -294,8 +294,11 @@
 
   /* Leafletレイヤ → 内部座標（[緯度,経度]、丸め済み） */
   function layerToCoords(type, layer) {
-    // 世界地図を横にスクロールした先（経度±180の外）で描いた座標は -180〜180 へ戻す
-    var pt = function (p) { var w = p.wrap(); return [round(w.lat), round(w.lng)]; };
+    // 世界地図を横にスクロールした先（経度±180の外）で描いた図形は、形を保ったまま360°単位でずらして戻す。
+    // 頂点ごとに折り返すと、±180°をまたぐ線や面が地球を一周する形に壊れるため、先頭の頂点を基準に全体を動かす。
+    var first = type === 'point' ? layer.getLatLng() : type === 'line' ? layer.getLatLngs()[0] : layer.getLatLngs()[0][0];
+    var shift = first ? first.wrap().lng - first.lng : 0;
+    var pt = function (p) { return [round(p.lat), round(p.lng + shift)]; };
     if (type === 'point') return pt(layer.getLatLng());
     if (type === 'line') return layer.getLatLngs().map(pt);
     return layer.getLatLngs().map(function (ring) { return ring.map(pt); }); // polygon: リング配列
@@ -337,7 +340,8 @@
 
   /* 現在地の取得結果を受けるリスナ（initMapで1回だけ登録）。
    * 許可ダイアログを放置・無視されるとどちらのイベントも来ないため、
-   * 「取得中」フラグで再実行を塞がず、最後に指定されたコールバックへ結果を渡す。 */
+   * 「取得中」フラグで再実行を塞がず、最後に指定されたコールバックへ結果を渡す。
+   * 連打で複数の要求が走った場合は届いた順に通知する（先の要求が失敗しても、後の成功で表示が更新される）。 */
   MapView.prototype._watchLocation = function () {
     var self = this, map = this.map;
     map.on('locationfound', function (e) {
@@ -347,12 +351,10 @@
         global.L.circleMarker(e.latlng, { radius: 6, color: '#fff', weight: 2, fillColor: '#1565c0', fillOpacity: 1, interactive: false, pmIgnore: true })
       ]).addTo(map);
       var cb = self._locateCallbacks;
-      self._locateCallbacks = null;
       if (cb && cb.onDone) cb.onDone();
     });
     map.on('locationerror', function (e) {
       var cb = self._locateCallbacks;
-      self._locateCallbacks = null;
       if (cb && cb.onError) cb.onError(e);
     });
   };

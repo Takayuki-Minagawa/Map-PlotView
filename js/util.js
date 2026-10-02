@@ -54,12 +54,20 @@
     }
   }
 
+  /* ダイアログ（編集・選択・マニュアル・写真拡大）が1つでも開いている間は、背後のヘッダ・サイドバー・地図を
+   * Tabキーやクリックで操作できないようにする。開いた直後と閉じた直後に呼ぶこと。 */
+  function syncBackgroundInert() {
+    var open = !!document.querySelector('.mpv-modal, .mpv-lightbox');
+    document.querySelectorAll('.mpv-header, .mpv-layout').forEach(function (el) { el.inert = open; });
+  }
+
   global.Util = {
     escapeHtml: escapeHtml,
     formatVal: formatVal,
     round: round,
     toNumber: toNumber,
     parseScalar: parseScalar,
-    decodeText: decodeText
+    decodeText: decodeText,
+    syncBackgroundInert: syncBackgroundInert
   };
 })(typeof window !== 'undefined' ? window : this);

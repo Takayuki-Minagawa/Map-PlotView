@@ -299,3 +299,37 @@ test('詳細を閉じると選択が解除される', () => {
   assert.equal(h.state.activeFeatureId, null);
   assert.equal(h.cap.detailObj.current, null);
 });
+
+test('操作バー: セッション中だけ表示し、確定は形状編集のときだけ出す。履歴ボタンは無効化する', () => {
+  const h = loaded();
+  assert.equal(h.el('btnUndo').disabled, false);
+
+  h.el('btnAddLine').fire('click');
+  assert.equal(h.el('editBar').hidden, false);
+  assert.equal(h.el('btnReshapeDone').hidden, true, '作図に確定ボタンは出さない');
+  assert.equal(h.el('editBarLabel').textContent, '作図中');
+  assert.equal(h.el('btnUndo').disabled, true);
+  h.el('btnReshapeCancel').fire('click');
+  assert.equal(h.mapview.drawEnabled, false, 'キャンセルで作図を中止');
+  assert.equal(h.el('editBar').hidden, true);
+  assert.equal(h.el('btnUndo').disabled, false);
+
+  h.el('btnRectSelect').fire('click');
+  assert.equal(h.el('editBarLabel').textContent, '範囲を選択中');
+  h.el('btnReshapeCancel').fire('click');
+  assert.equal(h.mapview.rectDone, null);
+  assert.equal(h.el('editBar').hidden, true);
+
+  h.cap.detail.onReshape(h.state.features.get('p1'));
+  assert.equal(h.el('btnReshapeDone').hidden, false);
+  assert.equal(h.el('editBarLabel').textContent, '形状を編集中');
+});
+
+test('作図: 範囲外の座標を含む形状は追加しない', () => {
+  const h = loaded();
+  h.el('btnAddLine').fire('click');
+  h.mapview.map.handlers['pm:create']({ layer: { coords: [[35, 179], [35, 181]] } });
+  assert.equal(h.alerts.length, 1);
+  assert.deepEqual(h.ids(), ['p1', 'g1']);
+  assert.equal(h.mapview.layers.has('l001'), false, 'プレビューも残さない');
+});
