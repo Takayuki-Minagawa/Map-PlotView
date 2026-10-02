@@ -1,10 +1,10 @@
 name: Deploy GitHub Pages
 
 on:
+  # GitHub Actions は main への Pages 公開にのみ使う（PRでは実行しない。テストは手元で npm test）
   push:
     branches:
       - main
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -41,7 +41,8 @@ jobs:
         run: npm test
 
   deploy:
-    if: github.event_name != 'pull_request'
+    # 手動実行(workflow_dispatch)でも main 以外からは公開しない
+    if: github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest
     environment:

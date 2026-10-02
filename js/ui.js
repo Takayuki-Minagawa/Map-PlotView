@@ -1,13 +1,13 @@
-/* ui.js — サイドバー描画 / タグ管理 / 一覧 / 抽出結果 / 編集モーダル / エクスポート整形 */
+/* ui.js — サイドバー描画 / タグ管理 / 一覧 / 抽出結果 / 検索結果 / 編集モーダル / エクスポート整形 */
 (function (global) {
   'use strict';
 
-  var esc = function (s) { return global.Symbols.escapeHtml(s); };
+  var esc = function (s) { return global.Util.escapeHtml(s); };
   var tr = function (key, vars) { return global.I18n ? global.I18n.t(key, vars) : key; };
   var typeLabel = function (type) { return global.I18n ? global.I18n.typeLabel(type) : type; };
 
   function UI(refs, handlers) {
-    this.refs = refs;          // {tagList, featureList, selectionList, selectionCount, warnings}
+    this.refs = refs;          // {tagList, featureList, selectionList, selectionCount, searchResults, warnings}
     this.h = handlers || {};   // コールバック群
   }
 
@@ -90,6 +90,28 @@
       warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>';
   };
 
+  /* 場所検索の候補リスト。results: [{title, lat, lng}]、message を渡すと案内文のみ表示。 */
+  UI.prototype.renderSearchResults = function (results, message) {
+    var self = this;
+    var el = this.refs.searchResults;
+    if (!el) return;
+    el.innerHTML = '';
+    if (message) {
+      el.innerHTML = '<div class="mpv-empty">' + esc(message) + '</div>';
+      return;
+    }
+    (results || []).forEach(function (r) {
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'mpv-search-result';
+      row.textContent = r.title || (r.lat + ', ' + r.lng);
+      row.addEventListener('click', function () {
+        if (self.h.onPickSearchResult) self.h.onPickSearchResult(r);
+      });
+      el.appendChild(row);
+    });
+  };
+
   /* タグ編集モーダル */
   UI.prototype.openTagEditor = function (tag, onSave) {
     var isNew = !tag;
@@ -116,13 +138,13 @@
   /* フィーチャ編集モーダル（プロパティ/メモ/写真） */
   UI.prototype.openFeatureEditor = function (feature, tags, ctx, onSave, onCancel) {
     var isNew = !feature.id;
-    var photos = (feature.photos || []).slice();
+    var isAdding = isNew || !!(ctx && ctx.isNew); // 作図直後は採番済みIDを持つが、見出しは「追加」にする
+    // キャンセル時に元データへ影響しないよう写真は複製して編集する
+    var photos = (feature.photos || []).map(function (p) { return Object.assign({}, p); });
     var tagOpts = tags.map(function (t) {
       return '<option value="' + esc(t.id) + '"' + (t.id === feature.tag ? ' selected' : '') + '>' + esc(t.name || t.id) + '</option>';
     }).join('');
-    var propsText = Object.keys(feature.properties || {}).map(function (k) {
-      return k + ': ' + formatVal(feature.properties[k]);
-    }).join('\n');
+    var propsText = formatProps(feature.properties);
 
     var body =
       field('id', tr('fieldId'), '<input name="id" value="' + esc(feature.id || '') + '" ' + (isNew ? '' : 'readonly') + '>') +
@@ -140,7 +162,7 @@
       '</div>';
 
     var self = this;
-    modal(isNew ? tr('addPlotTitle') : tr('editPlotTitle'), body, function (form) {
+    modal(isAdding ? tr('addPlotTitle') : tr('editPlotTitle'), body, function (form) {
       var f = Object.assign({}, feature);
       f.id = form.id.value.trim();
       f.name = form.name.value.trim();
@@ -157,9 +179,9 @@
       var listEl = modalEl.querySelector('#mpvPhotoEdit');
       function redraw() {
         listEl.innerHTML = photos.map(function (p, i) {
-          return '<div class="mpv-photo-item"><img src="' + esc(global.Detail.resolveSrc(p.src, ctx.meta)) + '">' +
+          return '<div class="mpv-photo-item"><img draggable="false" alt="" src="' + esc(global.Detail.resolveSrc(p.src, ctx.meta)) + '">' +
             '<input data-i="' + i + '" data-k="caption" placeholder="' + esc(tr('placeholderCaption')) + '" value="' + esc(p.caption || '') + '">' +
-            '<button data-del="' + i + '">x</button></div>';
+            '<button type="button" data-del="' + i + '" aria-label="' + esc(tr('delete')) + '">x</button></div>';
         }).join('');
         listEl.querySelectorAll('input[data-k]').forEach(function (inp) {
           inp.addEventListener('input', function () { photos[+inp.getAttribute('data-i')].caption = inp.value; });
@@ -193,8 +215,17 @@
   };
 
   /* ---- エクスポート整形 ---- */
-  function toCSV(features, tagsById) {
-    var rows = [['id', 'name', 'tag', 'type', 'lat', 'lng', 'note']];
+  var CSV_BASE_COLUMNS = ['id', 'name', 'tag', 'type', 'lat', 'lng', 'note'];
+
+  /* 基本列＋表示項目(properties)の列でCSV化する。線/面の座標は先頭頂点を代表点として出力。 */
+  function toCSV(features) {
+    var propKeys = [];
+    features.forEach(function (f) {
+      Object.keys(f.properties || {}).forEach(function (k) {
+        if (propKeys.indexOf(k) === -1) propKeys.push(k);
+      });
+    });
+    var rows = [CSV_BASE_COLUMNS.concat(propKeys)];
     features.forEach(function (f) {
       var lat = '', lng = '';
       if (f.type === 'point') { lat = f.coordinates[0]; lng = f.coordinates[1]; }
@@ -202,7 +233,9 @@
         var first = f.type === 'line' ? f.coordinates[0] : f.coordinates[0][0];
         lat = first[0]; lng = first[1];
       }
-      rows.push([f.id, f.name || '', f.tag || '', f.type, lat, lng, (f.note || '').replace(/\r?\n/g, ' ')]);
+      var props = f.properties || {};
+      rows.push([f.id, f.name || '', f.tag || '', f.type, lat, lng, String(f.note || '').replace(/\r?\n/g, ' ')]
+        .concat(propKeys.map(function (k) { return formatVal(props[k]); })));
     });
     return rows.map(function (r) {
       return r.map(function (c) {
@@ -233,17 +266,32 @@
     return '<select name="symbol">' + opts + '</select>';
   }
 
+  var PROP_INDENT = '  ';
+
+  /* 表示項目 → 編集欄のテキスト（key: value を1行1項目）。値の2行目以降は字下げして続きの行だと分かるようにする。 */
+  function formatProps(props) {
+    return Object.keys(props || {}).map(function (k) {
+      return k + ': ' + formatVal(props[k]).replace(/\n/g, '\n' + PROP_INDENT);
+    }).join('\n');
+  }
+
+  /* 編集欄のテキスト → 表示項目。字下げされた行は直前の項目の続き（複数行の値）、
+   * 字下げもコロンも無い行は無視する。 */
   function parseProps(text) {
-    var o = {};
+    var raw = {}, last = null;
     (text || '').split('\n').forEach(function (line) {
+      if (last != null && /^[ \t]/.test(line)) {
+        raw[last] += '\n' + line.replace(/^( {1,2}|\t)/, '');
+        return;
+      }
       var i = line.indexOf(':');
-      if (i === -1) return;
-      var k = line.slice(0, i).trim();
-      var v = line.slice(i + 1).trim();
+      var k = i === -1 ? '' : line.slice(0, i).trim();
       if (!k) return;
-      if (/^-?\d+(\.\d+)?$/.test(v)) v = parseFloat(v);
-      o[k] = v;
+      raw[k] = line.slice(i + 1);
+      last = k;
     });
+    var o = {};
+    Object.keys(raw).forEach(function (k) { o[k] = global.Util.parseScalar(raw[k]); });
     return o;
   }
 
@@ -256,37 +304,84 @@
 
   var formatVal = function (v) { return global.Util.formatVal(v); };
 
-  /* 汎用モーダル。onSubmitがfalseを返すと閉じない。afterRenderで内部結線。 */
-  function modal(title, bodyHtml, onSubmit, afterRender, onCancel) {
+  /* モーダルの共通土台。Esc・背景クリック・×で閉じる。onClose(submitted) は閉じた後に1回だけ呼ばれる。
+   * 戻り値 {el, close(submitted)}。 */
+  function openDialog(innerHtml, onClose) {
     var back = document.createElement('div');
     back.className = 'mpv-modal';
-    back.innerHTML =
-      '<form class="mpv-modal__box">' +
-      '<header><h3>' + esc(title) + '</h3><button type="button" class="mpv-modal__x" aria-label="' + esc(tr('close')) + '">x</button></header>' +
+    back.innerHTML = innerHtml;
+    var closed = false;
+    function close(submitted) {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener('keydown', onKey);
+      if (back.parentNode) back.parentNode.removeChild(back);
+      global.Util.syncBackgroundInert();
+      if (onClose) onClose(submitted === true);
+    }
+    function onKey(e) {
+      if (e.key !== 'Escape') return;
+      if (e.isComposing || e.keyCode === 229) return; // 日本語入力の変換取消のEscでは閉じない
+      // 最前面のモーダルだけがEscに反応する
+      var all = document.querySelectorAll('.mpv-modal');
+      if (all[all.length - 1] === back) close(false);
+    }
+    var x = back.querySelector('.mpv-modal__x');
+    if (x) x.addEventListener('click', function () { close(false); });
+    back.addEventListener('mousedown', function (e) { if (e.target === back) close(false); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(back);
+    global.Util.syncBackgroundInert();
+    return { el: back, close: close };
+  }
+
+  function dialogHeader(title) {
+    return '<header><h3>' + esc(title) + '</h3><button type="button" class="mpv-modal__x" aria-label="' + esc(tr('close')) + '">x</button></header>';
+  }
+
+  /* 入力フォームのモーダル。onSubmitがfalseを返すと閉じない。afterRenderで内部結線。 */
+  function modal(title, bodyHtml, onSubmit, afterRender, onCancel) {
+    var dlg = openDialog(
+      '<form class="mpv-modal__box" role="dialog" aria-modal="true">' + dialogHeader(title) +
       '<div class="mpv-modal__body">' + bodyHtml + '</div>' +
       '<footer><button type="button" class="mpv-cancel">' + esc(tr('cancel')) + '</button>' +
-      '<button type="submit" class="mpv-ok">' + esc(tr('save')) + '</button></footer></form>';
-    var submitted = false;
-    function close() {
-      if (back.parentNode) back.parentNode.removeChild(back);
-      if (!submitted && onCancel) onCancel();
-    }
-    back.querySelector('.mpv-modal__x').addEventListener('click', close);
-    back.querySelector('.mpv-cancel').addEventListener('click', close);
-    back.addEventListener('click', function (e) { if (e.target === back) close(); });
-    var form = back.querySelector('form');
+      '<button type="submit" class="mpv-ok">' + esc(tr('save')) + '</button></footer></form>',
+      function (submitted) { if (!submitted && onCancel) onCancel(); });
+    var form = dlg.el.querySelector('form');
+    dlg.el.querySelector('.mpv-cancel').addEventListener('click', function () { dlg.close(false); });
     form.addEventListener('submit', function (e) {
       e.preventDefault();
-      var r = onSubmit(form);
-      if (r !== false) { submitted = true; close(); }
+      if (onSubmit(form) !== false) dlg.close(true);
     });
-    document.body.appendChild(back);
-    if (afterRender) afterRender(back);
-    var firstInput = form.querySelector('input,select,textarea');
+    if (afterRender) afterRender(dlg.el);
+    var firstInput = form.querySelector('input:not([readonly]),select,textarea');
     if (firstInput) firstInput.focus();
   }
 
+  /* 選択肢ダイアログ。options: [{key, label, primary}]。選ばれたら onPick(key)、閉じただけなら何もしない。 */
+  function choose(title, message, options, onPick) {
+    var dlg = openDialog(
+      '<div class="mpv-modal__box" role="dialog" aria-modal="true">' + dialogHeader(title) +
+      '<div class="mpv-modal__body"><p class="mpv-modal__msg">' + esc(message) + '</p></div>' +
+      '<footer><button type="button" class="mpv-cancel">' + esc(tr('cancel')) + '</button>' +
+      options.map(function (o, i) {
+        return '<button type="button" data-choice="' + i + '"' + (o.primary ? ' class="mpv-ok"' : '') + '>' + esc(o.label) + '</button>';
+      }).join('') + '</footer></div>');
+    dlg.el.querySelector('.mpv-cancel').addEventListener('click', function () { dlg.close(false); });
+    dlg.el.querySelectorAll('[data-choice]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        dlg.close(true);
+        onPick(options[+btn.getAttribute('data-choice')].key);
+      });
+    });
+    var first = dlg.el.querySelector('.mpv-ok') || dlg.el.querySelector('[data-choice]');
+    if (first) first.focus();
+  }
+
   UI.toCSV = toCSV;
+  UI.parseProps = parseProps;
+  UI.formatProps = formatProps;
+  UI.choose = choose;
   UI.toGeoJSONCollection = toGeoJSONCollection;
   global.UI = UI;
 })(typeof window !== 'undefined' ? window : this);

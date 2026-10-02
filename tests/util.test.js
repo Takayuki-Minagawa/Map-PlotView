@@ -24,3 +24,55 @@ test('Util.round: 既定6桁、指定桁数での丸め', () => {
   assert.equal(Util.round(35.12345678, 7), 35.1234568);
   assert.equal(Util.round(35.12345678, 2), 35.12);
 });
+
+test('Util.formatVal: Dateは引用符なしのISO文字列にする', () => {
+  const { Util } = createSandbox({});
+  assert.equal(Util.formatVal(new Date('2026-03-01T19:15:00.000Z')), '2026-03-01T19:15:00.000Z');
+  assert.equal(Util.formatVal(new Date('invalid')), '');
+});
+
+test('Util.toNumber: 10進数表記のみ数値化する', () => {
+  const { Util } = createSandbox({});
+  assert.equal(Util.toNumber('35.5'), 35.5);
+  assert.equal(Util.toNumber(' -139 '), -139);
+  assert.equal(Util.toNumber('+1.25'), 1.25);
+  assert.ok(Number.isNaN(Util.toNumber('')));
+  assert.ok(Number.isNaN(Util.toNumber('1e3')));
+  assert.ok(Number.isNaN(Util.toNumber('0x10')));
+  assert.ok(Number.isNaN(Util.toNumber('35.5N')));
+  assert.ok(Number.isNaN(Util.toNumber(null)));
+});
+
+test('Util.parseScalar: 数値は数値化し、先頭ゼロのコード値や文字列は保持する', () => {
+  const { Util } = createSandbox({});
+  assert.equal(Util.parseScalar(' 12 '), 12);
+  assert.equal(Util.parseScalar('0.5'), 0.5);
+  assert.equal(Util.parseScalar('0'), 0);
+  assert.equal(Util.parseScalar('-3.25'), -3.25);
+  assert.equal(Util.parseScalar('007'), '007', '郵便番号・コード値の先頭ゼロを落とさない');
+  assert.equal(Util.parseScalar('+819012345678'), '+819012345678', '電話番号の + を落とさない');
+  assert.equal(Util.parseScalar('1.10'), '1.10', '末尾ゼロ（版番号など）を落とさない');
+  assert.equal(Util.parseScalar('12345678901234567890'), '12345678901234567890', '桁あふれする整数は文字列のまま');
+  assert.equal(Util.parseScalar('9007199254740993'), '9007199254740993');
+  assert.equal(Util.parseScalar('-0'), '-0');
+  assert.equal(Util.parseScalar('5強'), '5強');
+  assert.equal(Util.parseScalar('  text  '), 'text');
+  assert.equal(Util.parseScalar(''), '');
+});
+
+test('Util.decodeText: UTF-8(BOM付き含む)とShift_JISを判別して復号する', () => {
+  const { Util } = createSandbox({});
+  const utf8 = new TextEncoder().encode('名称,緯度');
+  assert.equal(Util.decodeText(utf8.buffer), '名称,緯度');
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8]);
+  assert.equal(Util.decodeText(bom.buffer), '名称,緯度', 'BOMは取り除かれる');
+  // 「緯度」の Shift_JIS バイト列（UTF-8としては不正）
+  const sjis = new Uint8Array([0x88, 0xdc, 0x93, 0x78]);
+  assert.equal(Util.decodeText(sjis.buffer), '緯度');
+  // BOM付きUTF-16（Excelの「Unicodeテキスト」）
+  const utf16le = new Uint8Array([0xff, 0xfe, 0xef, 0x7d, 0xa6, 0x5e]);
+  assert.equal(Util.decodeText(utf16le.buffer), '緯度');
+  const utf16be = new Uint8Array([0xfe, 0xff, 0x7d, 0xef, 0x5e, 0xa6]);
+  assert.equal(Util.decodeText(utf16be.buffer), '緯度');
+  assert.equal(Util.decodeText(new ArrayBuffer(0)), '');
+});

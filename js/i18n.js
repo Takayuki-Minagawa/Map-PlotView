@@ -80,7 +80,7 @@
       fieldTag: 'タグ',
       fieldSymbolOverride: '記号(上書き任意)',
       fieldTypeCoords: '種別/座標',
-      fieldProps: '表示項目 (key: value 改行区切り)',
+      fieldProps: '表示項目 (key: value 改行区切り。値の続きの行は字下げ)',
       fieldNote: 'メモ',
       fieldPhotos: '写真',
       placeholderCaption: 'キャプション',
@@ -123,7 +123,67 @@
       warningGeoJSONGeometry: 'features[{index}]: 未対応のgeometry "{geomType}" のためスキップ（Point/LineString/Polygonのみ対応）',
       warningDuplicateId: 'features[{index}]: ID "{id}" が重複しているため "{newId}" に変更',
       warningFeatureInvalid: 'features[{index}] ({id}): {errors}',
-      warningUnknownTag: 'features[{index}] ({id}): タグ "{tag}" が未定義のため「未分類」に変更'
+      warningUnknownTag: 'features[{index}] ({id}): タグ "{tag}" が未定義のため「未分類」に変更',
+      warningTagInvalid: 'tags[{index}]: id の無い不正なタグ定義のためスキップ',
+      warningDuplicateTag: 'tags[{index}]: タグID "{id}" が重複しているためスキップ',
+      warningTagColor: 'tags[{index}] ({id}): color の指定が不正なため既定色で表示',
+      warningMergeDuplicateId: 'ID "{id}" は既存データと重複するため "{newId}" に変更',
+      csvEmptyError: 'CSVにデータ行がありません（1行目は見出し行として扱います）',
+      csvNoLatLngError: 'CSVに緯度・経度の列が見つかりません（見出しに lat / lng、または 緯度 / 経度 が必要）',
+      csvUnclosedQuoteError: 'CSVの{row}行目で始まる引用符（"）が閉じられていません',
+      warningCsvNonPoint: '{row}行目: type "{type}" は点ではないためスキップ（CSVで取り込めるのは点のみ）',
+      warningCsvDuplicateId: '{row}行目: ID "{id}" が重複しているため "{newId}" に変更',
+      warningCsvRow: '{row}行目: {errors}',
+      placeSearchTitle: '場所検索',
+      placeSearchPlaceholder: '住所・地名 / 35.68, 139.76',
+      search: '検索',
+      searching: '検索中…',
+      searchNoResult: '該当する場所が見つかりません。',
+      searchError: '検索に失敗しました: {message}',
+      addPointHere: 'ここに点を追加',
+      overlayHillshade: '陰影起伏図',
+      overlayRelief: '色別標高図',
+      overlayFlood: '洪水浸水想定',
+      overlaySediment: '土砂災害警戒区域',
+      overlayTsunami: '津波浸水想定',
+      overlayOpacity: '重ね合わせの濃さ',
+      undo: '元に戻す',
+      redo: 'やり直し',
+      undoTitle: '元に戻す (Ctrl+Z / ⌘Z)',
+      redoTitle: 'やり直し (Ctrl+Shift+Z / Ctrl+Y / ⇧⌘Z)',
+      undone: '元に戻しました',
+      redone: 'やり直しました',
+      sessionBusy: '作図・範囲選択・形状編集の途中です。確定するか Esc で取り消してから操作してください。',
+      drawCancelled: '頂点が無くなったため作図を終了しました',
+      dropFirstOnly: '複数のファイルがドロップされたため、最初の1件（{name}）だけを読み込みました',
+      locate: '現在地を表示',
+      locating: '現在地を取得中…',
+      locateError: '現在地を取得できません: {message}',
+      reshape: '形状編集',
+      reshapeEditing: '形状を編集中',
+      drawingNow: '作図中',
+      selectingNow: '範囲を選択中',
+      reshapeConfirm: '確定',
+      reshapeHidden: '非表示のプロットは形状を編集できません。タグを表示してください。',
+      reshapeHintPoint: '点をドラッグして移動し、「確定」(Enter) で保存。Escで取消。',
+      reshapeHintShape: '頂点をドラッグして移動、中間点をドラッグして追加、右クリックで削除。「確定」(Enter) で保存。Escで取消。',
+      reshapeInvalid: '形状が不正なため変更を取り消しました: {errors}',
+      drawInvalid: '描いた形状が不正なため追加できません: {errors}',
+      reshapeSaved: '形状を更新しました',
+      dropHint: 'ここにファイルをドロップして読込（YAML / GeoJSON / CSV）',
+      importTitle: 'データの読込',
+      importMessage: '現在のデータ（{current}件）があります。\n読み込むデータ（{incoming}件）を追加しますか、それとも置き換えますか？',
+      importMerge: '追加する',
+      importReplace: '置き換える',
+      elevationGet: '標高を取得',
+      elevationLoading: '取得中…',
+      elevationNoData: 'この地点の標高データはありません。',
+      elevationValue: '標高 {value} m（{source}）',
+      elevationSave: '表示項目に保存',
+      elevationPropKey: '標高(m)',
+      elevationError: '標高を取得できません: {message}',
+      propertySaved: '「{key}」を表示項目に保存しました',
+      autosaveFailed: '自動保存できませんでした（ブラウザの保存容量を超えています）。ファイルに保存してください。'
     },
     en: {
       title: 'Map PlotView - Map Plotting Tool',
@@ -196,7 +256,7 @@
       fieldTag: 'Tag',
       fieldSymbolOverride: 'Symbol override',
       fieldTypeCoords: 'Type / coordinates',
-      fieldProps: 'Display fields (key: value, one per line)',
+      fieldProps: 'Display fields (key: value, one per line; indent continuation lines)',
       fieldNote: 'Note',
       fieldPhotos: 'Photos',
       placeholderCaption: 'Caption',
@@ -239,7 +299,67 @@
       warningGeoJSONGeometry: 'features[{index}]: unsupported geometry "{geomType}" skipped (only Point/LineString/Polygon are supported)',
       warningDuplicateId: 'features[{index}]: duplicate ID "{id}" renamed to "{newId}"',
       warningFeatureInvalid: 'features[{index}] ({id}): {errors}',
-      warningUnknownTag: 'features[{index}] ({id}): tag "{tag}" is undefined, changed to Uncategorized'
+      warningUnknownTag: 'features[{index}] ({id}): tag "{tag}" is undefined, changed to Uncategorized',
+      warningTagInvalid: 'tags[{index}]: invalid tag definition without an id, skipped',
+      warningDuplicateTag: 'tags[{index}]: duplicate tag ID "{id}" skipped',
+      warningTagColor: 'tags[{index}] ({id}): invalid color, using the default color',
+      warningMergeDuplicateId: 'ID "{id}" already exists, renamed to "{newId}"',
+      csvEmptyError: 'The CSV has no data rows (the first row is treated as the header)',
+      csvNoLatLngError: 'No latitude/longitude columns found in the CSV (headers lat / lng or latitude / longitude are required)',
+      csvUnclosedQuoteError: 'The quote (") opened on line {row} of the CSV is never closed',
+      warningCsvNonPoint: 'row {row}: type "{type}" is not a point, skipped (only points can be imported from CSV)',
+      warningCsvDuplicateId: 'row {row}: duplicate ID "{id}" renamed to "{newId}"',
+      warningCsvRow: 'row {row}: {errors}',
+      placeSearchTitle: 'Place Search',
+      placeSearchPlaceholder: 'Address, place, or 35.68, 139.76',
+      search: 'Search',
+      searching: 'Searching...',
+      searchNoResult: 'No matching place found.',
+      searchError: 'Search failed: {message}',
+      addPointHere: 'Add a point here',
+      overlayHillshade: 'Hillshade',
+      overlayRelief: 'Elevation colors',
+      overlayFlood: 'Flood inundation',
+      overlaySediment: 'Sediment hazard zones',
+      overlayTsunami: 'Tsunami inundation',
+      overlayOpacity: 'Overlay opacity',
+      undo: 'Undo',
+      redo: 'Redo',
+      undoTitle: 'Undo (Ctrl+Z / ⌘Z)',
+      redoTitle: 'Redo (Ctrl+Shift+Z / Ctrl+Y / ⇧⌘Z)',
+      undone: 'Undone',
+      redone: 'Redone',
+      sessionBusy: 'A drawing, selection, or shape edit is in progress. Finish it or press Esc to cancel first.',
+      drawCancelled: 'Drawing ended because no vertices were left',
+      dropFirstOnly: 'Several files were dropped; only the first one ({name}) was loaded',
+      locate: 'Show my location',
+      locating: 'Locating...',
+      locateError: 'Could not get your location: {message}',
+      reshape: 'Edit shape',
+      reshapeEditing: 'Editing shape',
+      drawingNow: 'Drawing',
+      selectingNow: 'Selecting an area',
+      reshapeConfirm: 'Done',
+      reshapeHidden: 'Hidden plots cannot be reshaped. Show the tag first.',
+      reshapeHintPoint: 'Drag the point to move it, then press Done (Enter) to save. Esc cancels.',
+      reshapeHintShape: 'Drag vertices to move, drag midpoints to add, right-click to remove. Press Done (Enter) to save. Esc cancels.',
+      reshapeInvalid: 'The shape is invalid, so the change was discarded: {errors}',
+      drawInvalid: 'The drawn shape is invalid and cannot be added: {errors}',
+      reshapeSaved: 'Shape updated',
+      dropHint: 'Drop a file here to load it (YAML / GeoJSON / CSV)',
+      importTitle: 'Load data',
+      importMessage: 'You already have data ({current} plots).\nAdd the loaded data ({incoming} plots) to it, or replace it?',
+      importMerge: 'Add',
+      importReplace: 'Replace',
+      elevationGet: 'Get elevation',
+      elevationLoading: 'Loading...',
+      elevationNoData: 'No elevation data for this location.',
+      elevationValue: 'Elevation {value} m ({source})',
+      elevationSave: 'Save to display fields',
+      elevationPropKey: 'Elevation (m)',
+      elevationError: 'Could not get the elevation: {message}',
+      propertySaved: 'Saved "{key}" to display fields',
+      autosaveFailed: 'Autosave failed (browser storage is full). Save to a file instead.'
     }
   };
 
@@ -248,30 +368,30 @@
       label: '日本語',
       title: '簡易マニュアル',
       sections: [
-        ['基本操作', ['「読込」で保存済みデータ（YAML / GeoJSON）を開きます。', '「サンプル」で付属データを読み込みます。file://で失敗する場合はローカルサーバで開いてください。', '「保存(YAML)」で全体を保存します。「保存(GeoJSON)」でGeoJSONとしても書き出せます。']],
-        ['プロット作成', ['「点」「線」「面」を選び、地図上で作図します。', '表示された編集画面で名称、タグ、表示項目、メモ、写真を設定して保存します。', '一覧または地図上のプロットを選ぶと詳細を確認できます。']],
-        ['範囲抽出', ['「矩形選択」を押して地図上をドラッグします。', '判定は「交差」または「内包」から選択できます。', '抽出結果はYAML、GeoJSON、CSVで書き出せます。']],
-        ['表示設定', ['背景地図や活断層図を切り替えられます。', 'タグのチェックを外すと、そのタグのプロットを一時的に非表示にできます。', '右上のボタンで日本語/英語、ライト/ダークを切り替えられます。']]
+        ['基本操作', ['「読込」またはファイルのドラッグ&ドロップで、保存済みデータ（YAML / GeoJSON / CSV）を開きます。既にデータがある場合は「追加」か「置き換え」を選べます。', '「サンプル」で付属データを読み込みます。file://で失敗する場合はローカルサーバで開いてください。', '「保存(YAML)」で全体を保存します。「保存(GeoJSON)」でGeoJSONとしても書き出せます。', '操作を誤ったときは「元に戻す」(Ctrl+Z / ⌘Z) / 「やり直し」(Ctrl+Shift+Z) が使えます。線・面の作図中は Ctrl+Z で直前の頂点を取り消せます。']],
+        ['プロット作成・編集', ['「点」「線」「面」を選び、地図上で作図します。', '表示された編集画面で名称、タグ、表示項目、メモ、写真を設定して保存します。', '一覧または地図上のプロットを選ぶと詳細を確認できます。', '詳細の「形状編集」で点の移動や頂点の編集ができます。「確定」で保存、Escで取消です。', '点の詳細では「標高を取得」で国土地理院の標高を調べ、表示項目に保存できます。']],
+        ['場所検索・範囲抽出', ['「場所検索」に住所・地名、または緯度と経度（例: 35.68, 139.76）を入力して検索します。検索地点はそのまま点として追加できます。', '「矩形選択」を押して地図上をドラッグします（タッチ操作にも対応）。作図や範囲選択をやめるときは地図下部の「キャンセル」か Esc を使います。', '判定は「交差」または「内包」から選択できます。', '抽出結果はYAML、GeoJSON、CSVで書き出せます。']],
+        ['表示設定', ['背景地図と、陰影起伏図・色別標高図・活断層図・ハザードマップ（洪水・土砂災害・津波）の重ね合わせを切り替えられます。濃さはスライダーで調整します。', 'タグのチェックを外すと、そのタグのプロットを一時的に非表示にできます。', '地図左上の「◎」で現在地を表示します。', '右上のボタンで日本語/英語、ライト/ダークを切り替えられます。']]
       ]
     },
     zh: {
       label: '中文',
       title: '简易手册',
       sections: [
-        ['基本操作', ['使用“读取”打开已保存的数据（YAML / GeoJSON）。', '使用“示例”加载附带数据。如果在 file:// 下失败，请通过本地服务器打开。', '使用“保存(YAML)”保存全部数据，也可用“保存(GeoJSON)”导出 GeoJSON。']],
-        ['创建标绘', ['选择“点”“线”或“面”，然后在地图上绘制。', '在编辑窗口中设置名称、标签、显示项目、备注和照片后保存。', '点击列表或地图上的标绘对象即可查看详细信息。']],
-        ['范围提取', ['点击“矩形选择”，然后在地图上拖拽出范围。', '判定方式可选择“相交”或“包含”。', '提取结果可导出为 YAML、GeoJSON 或 CSV。']],
-        ['显示设置', ['可以切换底图和活动断层图层。', '取消标签勾选可临时隐藏该标签的标绘对象。', '右上角按钮可切换日语/英语以及亮色/暗色模式。']]
+        ['基本操作', ['使用“读取”或将文件拖放到页面上，打开已保存的数据（YAML / GeoJSON / CSV）。如果已有数据，可以选择“追加”或“替换”。', '使用“示例”加载附带数据。如果在 file:// 下失败，请通过本地服务器打开。', '使用“保存(YAML)”保存全部数据，也可用“保存(GeoJSON)”导出 GeoJSON。', '操作有误时可以使用“撤销”（元に戻す, Ctrl+Z / ⌘Z）/ “重做”（やり直し, Ctrl+Shift+Z）。绘制线、面时按 Ctrl+Z 可撤销上一个顶点。']],
+        ['创建与编辑标绘', ['选择“点”“线”或“面”，然后在地图上绘制。', '在编辑窗口中设置名称、标签、显示项目、备注和照片后保存。', '点击列表或地图上的标绘对象即可查看详细信息。', '在详细信息中点击“编辑形状”（形状編集）可以移动点或编辑顶点。点击“确定”（確定）保存，按 Esc 取消。', '对于点，可以通过“获取高程”（標高を取得）查询日本国土地理院的高程数据，并保存到显示项目。']],
+        ['地点搜索与范围提取', ['在“地点搜索”（場所検索）中输入地址、地名或纬度和经度（例如 35.68, 139.76）进行搜索。搜索到的位置可以直接添加为点。', '点击“矩形选择”，然后在地图上拖拽出范围（支持触摸操作）。要中止绘制或范围选择，请点击地图下方的“取消”（キャンセル）或按 Esc。', '判定方式可选择“相交”或“包含”。', '提取结果可导出为 YAML、GeoJSON 或 CSV。']],
+        ['显示设置', ['可以切换底图，并叠加阴影起伏图、分层设色高程图、活动断层图和灾害风险图（洪水淹没、泥石流与滑坡等地质灾害、海啸淹没）。可用滑块调整叠加层的不透明度。', '取消标签勾选可临时隐藏该标签的标绘对象。', '点击地图左上角的“◎”显示当前位置。', '右上角按钮可切换日语/英语以及亮色/暗色模式。']]
       ]
     },
     en: {
       label: 'English',
       title: 'Quick Manual',
       sections: [
-        ['Basics', ['Use “Load” to open saved data (YAML / GeoJSON).', 'Use “Sample” to load the bundled sample. If it fails from file://, open the app through a local server.', 'Use “Save YAML” to save everything; “Save GeoJSON” exports GeoJSON as well.']],
-        ['Creating Plots', ['Choose “Point”, “Line”, or “Polygon”, then draw on the map.', 'Set the name, tag, display fields, notes, and photos in the editor, then save.', 'Select a plot from the list or the map to view its details.']],
-        ['Area Extract', ['Press “Rectangle” and drag on the map.', 'Choose either “Intersect” or “Within” for the selection mode.', 'Export results as YAML, GeoJSON, or CSV.']],
-        ['Display Settings', ['Switch base maps and the active fault overlay as needed.', 'Uncheck a tag to temporarily hide its plots.', 'Use the top-right buttons to switch Japanese/English and Light/Dark modes.']]
+        ['Basics', ['Use “Load”, or drag and drop a file onto the page, to open saved data (YAML / GeoJSON / CSV). If you already have data, choose “Add” or “Replace”.', 'Use “Sample” to load the bundled sample. If it fails from file://, open the app through a local server.', 'Use “Save YAML” to save everything; “Save GeoJSON” exports GeoJSON as well.', 'Made a mistake? Use “Undo” (Ctrl+Z / ⌘Z) and “Redo” (Ctrl+Shift+Z). While drawing a line or polygon, Ctrl+Z removes the last vertex.']],
+        ['Creating and Editing Plots', ['Choose “Point”, “Line”, or “Polygon”, then draw on the map.', 'Set the name, tag, display fields, notes, and photos in the editor, then save.', 'Select a plot from the list or the map to view its details.', 'Use “Edit shape” in the details to move a point or edit vertices. Press “Done” to save or Esc to cancel.', 'For points, “Get elevation” looks up the GSI elevation, which you can save to the display fields.']],
+        ['Place Search and Area Extract', ['Type an address, a place name, or a latitude and longitude (e.g. 35.68, 139.76) into “Place Search”. The found location can be added as a point.', 'Press “Rectangle” and drag on the map (touch is supported). To stop drawing or selecting, use “Cancel” at the bottom of the map or press Esc.', 'Choose either “Intersect” or “Within” for the selection mode.', 'Export results as YAML, GeoJSON, or CSV.']],
+        ['Display Settings', ['Switch base maps and overlay hillshade, elevation colors, active faults, and hazard maps (flood, sediment, tsunami). Adjust the overlay opacity with the slider.', 'Uncheck a tag to temporarily hide its plots.', 'Press “◎” at the top left of the map to show your location.', 'Use the top-right buttons to switch Japanese/English and Light/Dark modes.']]
       ]
     }
   };
@@ -360,6 +480,7 @@
       '<footer><button type="button" class="mpv-ok">' + esc(t('close')) + '</button></footer>' +
       '</div>';
     document.body.appendChild(back);
+    global.Util.syncBackgroundInert();
 
     function render(langKey) {
       manualLang = langKey;
@@ -382,6 +503,7 @@
     function close() {
       if (back.parentNode) back.parentNode.removeChild(back);
       document.removeEventListener('keydown', onKey);
+      global.Util.syncBackgroundInert();
     }
     function onKey(e) { if (e.key === 'Escape') close(); }
     back.addEventListener('click', function (e) { if (e.target === back) close(); });

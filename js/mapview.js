@@ -1,28 +1,59 @@
-/* mapview.js — Leaflet初期化 / 背景・オーバーレイ / フィーチャ描画 / ハイライト / 矩形選択 */
+/* mapview.js — Leaflet初期化 / 背景・オーバーレイ / フィーチャ描画 / ハイライト / 矩形選択 / 形状編集 */
 (function (global) {
   'use strict';
 
   var GSI_ATTR = '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>';
   var OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
+  var HAZARD_ATTR = '<a href="https://disaportal.gsi.go.jp/hazardmapportal/hazardmap/copyright/opendata.html" target="_blank" rel="noopener">ハザードマップポータルサイト</a>';
 
+  var GSI = 'https://cyberjapandata.gsi.go.jp/xyz/';
+  var HAZARD = 'https://disaportaldata.gsi.go.jp/raster/';
+
+  /* max はタイルが提供される最大ズーム。それ以上は MAX_ZOOM まで拡大表示する。 */
+  var MAX_ZOOM = 19;
   var BASE_DEFS = {
-    std:   { url: 'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',           attr: GSI_ATTR, max: 18, label: '標準地図' },
-    pale:  { url: 'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',          attr: GSI_ATTR, max: 18, label: '淡色地図' },
-    photo: { url: 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', attr: GSI_ATTR, max: 18, label: '空中写真' },
-    osm:   { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',                     attr: OSM_ATTR, max: 19, label: 'OSM' }
+    std:   { url: GSI + 'std/{z}/{x}/{y}.png',           attr: GSI_ATTR, max: 18 }, // 標準地図
+    pale:  { url: GSI + 'pale/{z}/{x}/{y}.png',          attr: GSI_ATTR, max: 18 }, // 淡色地図
+    photo: { url: GSI + 'seamlessphoto/{z}/{x}/{y}.jpg', attr: GSI_ATTR, max: 18 }, // 空中写真
+    osm:   { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: OSM_ATTR, max: 19 }
   };
+  /* 定義順が重ね順（後のものほど上）。urls が複数あるものは1つのオーバーレイとしてまとめて切り替える。 */
   var OVERLAY_DEFS = {
-    afm: { url: 'https://cyberjapandata.gsi.go.jp/xyz/afm/{z}/{x}/{y}.png', attr: GSI_ATTR, max: 16, label: '活断層図' }
+    hillshade: { urls: [GSI + 'hillshademap/{z}/{x}/{y}.png'], attr: GSI_ATTR, max: 16 }, // 陰影起伏図
+    relief:    { urls: [GSI + 'relief/{z}/{x}/{y}.png'],       attr: GSI_ATTR, max: 15 }, // 色別標高図
+    afm:       { urls: [GSI + 'afm/{z}/{x}/{y}.png'],          attr: GSI_ATTR, max: 16 }, // 活断層図
+    flood:     { urls: [HAZARD + '01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png'], attr: HAZARD_ATTR, max: 17 }, // 洪水浸水想定区域（想定最大規模）
+    sediment:  {                                                                                             // 土砂災害警戒区域
+      urls: [
+        HAZARD + '05_dosekiryukeikaikuiki/{z}/{x}/{y}.png',   // 土石流
+        HAZARD + '05_kyukeishakeikaikuiki/{z}/{x}/{y}.png',   // 急傾斜地の崩壊
+        HAZARD + '05_jisuberikeikaikuiki/{z}/{x}/{y}.png'     // 地すべり
+      ],
+      attr: HAZARD_ATTR, max: 17
+    },
+    tsunami:   { urls: [HAZARD + '04_tsunami_newlegend_data/{z}/{x}/{y}.png'], attr: HAZARD_ATTR, max: 17 }  // 津波浸水想定
   };
+  var DEFAULT_OVERLAY_OPACITY = 0.85;
+  /* タイルの重ね順は zIndex で固定する（背景 < オーバーレイ定義順）。
+   * bringToBack() は表示中レイヤの最小zIndex-1へ書き換えるため、背景が一部のオーバーレイより上に来てしまう。 */
+  var BASE_Z_INDEX = 1;
+  var OVERLAY_Z_INDEX = 10;
+  var SEARCH_COLOR = '#ff5722';
+  var MIN_DRAG_PX = 4; // 矩形選択とみなす最小のドラッグ量
 
   function MapView() {
     this.map = null;
     this.baseLayers = {};
-    this.overlayLayers = {};
+    this.overlayLayers = {};        // key -> L.layerGroup(タイルレイヤ群)
+    this.overlayOpacity = DEFAULT_OVERLAY_OPACITY;
     this.currentBaseKey = null;
     this.featureGroup = null;       // フィーチャ用レイヤグループ
     this.layerObjects = new Map();  // featureId -> leaflet layer
-    this.highlightLayer = null;
+    this.selectionRect = null;
+    this.searchMarker = null;
+    this.locationLayer = null;
+    this._editingId = null;         // 形状編集中のfeatureId
+    this._locateCallbacks = null;
     this._onFeatureClick = null;
   }
 
@@ -33,43 +64,77 @@
 
     this.map = global.L.map(el, { zoomControl: true, preferCanvas: false })
       .setView(v.center, v.zoom);
+    global.L.control.scale({ imperial: false }).addTo(this.map);
 
     // 背景レイヤ生成
     var self = this;
     Object.keys(BASE_DEFS).forEach(function (k) {
       var d = BASE_DEFS[k];
-      self.baseLayers[k] = global.L.tileLayer(d.url, { attribution: d.attr, maxZoom: d.max, maxNativeZoom: d.max });
+      self.baseLayers[k] = global.L.tileLayer(d.url, { attribution: d.attr, maxZoom: MAX_ZOOM, maxNativeZoom: d.max, zIndex: BASE_Z_INDEX });
     });
-    Object.keys(OVERLAY_DEFS).forEach(function (k) {
+    Object.keys(OVERLAY_DEFS).forEach(function (k, i) {
       var d = OVERLAY_DEFS[k];
-      self.overlayLayers[k] = global.L.tileLayer(d.url, { attribution: d.attr, maxZoom: d.max, maxNativeZoom: d.max, opacity: 0.85 });
+      self.overlayLayers[k] = global.L.layerGroup(d.urls.map(function (url) {
+        return global.L.tileLayer(url, {
+          attribution: d.attr, maxZoom: MAX_ZOOM, maxNativeZoom: d.max, opacity: self.overlayOpacity, zIndex: OVERLAY_Z_INDEX + i
+        });
+      }));
     });
 
     this.setBaseLayer(v.baseLayer || 'pale');
     (v.overlays || []).forEach(function (k) { self.toggleOverlay(k, true); });
+    if (typeof v.overlayOpacity === 'number') this.setOverlayOpacity(v.overlayOpacity);
 
     this.featureGroup = global.L.featureGroup().addTo(this.map);
+    this._watchResize(el);
+    this._watchLocation();
     return this.map;
   };
 
+  /* 詳細パネルの開閉などで地図領域の大きさが変わったら、中心を保ったまま再計算する。
+   * （Leafletはウィンドウのリサイズしか検知しない） */
+  MapView.prototype._watchResize = function (el) {
+    if (!global.ResizeObserver) return;
+    var map = this.map, pending = false;
+    new global.ResizeObserver(function () {
+      if (pending) return;
+      pending = true;
+      global.requestAnimationFrame(function () {
+        pending = false;
+        map.invalidateSize();
+      });
+    }).observe(el);
+  };
+
   MapView.prototype.setBaseLayer = function (key) {
-    if (!this.baseLayers[key]) key = 'pale';
+    if (!has(BASE_DEFS, key)) key = 'pale'; // 外部ファイル由来の未知の名前（'constructor' 等を含む）は既定へ
     if (this.currentBaseKey && this.baseLayers[this.currentBaseKey]) {
       this.map.removeLayer(this.baseLayers[this.currentBaseKey]);
     }
     this.baseLayers[key].addTo(this.map);
-    if (this.baseLayers[key].bringToBack) this.baseLayers[key].bringToBack();
     this.currentBaseKey = key;
   };
 
   MapView.prototype.toggleOverlay = function (key, on) {
+    if (!has(OVERLAY_DEFS, key)) return false;
     var layer = this.overlayLayers[key];
-    if (!layer) return false;
     var isOn = this.map.hasLayer(layer);
     var want = (typeof on === 'boolean') ? on : !isOn;
     if (want && !isOn) layer.addTo(this.map);
     else if (!want && isOn) this.map.removeLayer(layer);
     return want;
+  };
+
+  /* オーバーレイ共通の不透明度（0.1〜1）を設定し、適用した値を返す */
+  MapView.prototype.setOverlayOpacity = function (value) {
+    var v = Math.min(1, Math.max(0.1, Number(value)));
+    if (!isFinite(v)) v = DEFAULT_OVERLAY_OPACITY;
+    this.overlayOpacity = v;
+    var self = this;
+    Object.keys(this.overlayLayers).forEach(function (k) {
+      self.overlayLayers[k].eachLayer(function (tile) { tile.setOpacity(v); });
+    });
+    return v;
   };
 
   /* feature + tag(色/記号) からLeafletレイヤを生成し地図へ追加 */
@@ -97,6 +162,7 @@
 
     layer.bindPopup(popupHtml(feature, tag));
     layer.on('click', function () {
+      if (self._editingId) return; // 形状編集中は選択を切り替えない
       if (self._onFeatureClick) self._onFeatureClick(feature.id);
     });
     layer.addTo(this.featureGroup);
@@ -106,10 +172,14 @@
 
   MapView.prototype.removeFeature = function (id) {
     var layer = this.layerObjects.get(id);
-    if (layer) { this.featureGroup.removeLayer(layer); this.layerObjects.delete(id); }
+    if (!layer) return;
+    if (this._editingId === id) this.stopGeometryEdit();
+    this.featureGroup.removeLayer(layer);
+    this.layerObjects.delete(id);
   };
 
   MapView.prototype.clearFeatures = function () {
+    this.stopGeometryEdit();
     this.featureGroup.clearLayers();
     this.layerObjects.clear();
   };
@@ -119,6 +189,11 @@
     if (!layer) return;
     if (visible && !this.featureGroup.hasLayer(layer)) this.featureGroup.addLayer(layer);
     else if (!visible && this.featureGroup.hasLayer(layer)) this.featureGroup.removeLayer(layer);
+  };
+
+  MapView.prototype.isFeatureVisible = function (id) {
+    var layer = this.layerObjects.get(id);
+    return !!layer && this.featureGroup.hasLayer(layer);
   };
 
   MapView.prototype.highlightFeature = function (id) {
@@ -164,7 +239,8 @@
       center: [round(c.lat), round(c.lng)],
       zoom: this.map.getZoom(),
       baseLayer: this.currentBaseKey,
-      overlays: this.getActiveOverlays()
+      overlays: this.getActiveOverlays(),
+      overlayOpacity: this.overlayOpacity
     };
   };
 
@@ -176,58 +252,200 @@
     return on;
   };
 
-  /* 矩形選択：ドラッグで1つの矩形を描き、bbox GeoJSON(Polygon)を onDone に返す */
-  MapView.prototype.startRectangleSelect = function (onDone) {
-    var self = this;
-    var start = null, rect = null;
-    this.clearSelectionRect();
-    this.map.dragging.disable();
-    this.map.getContainer().style.cursor = 'crosshair';
+  /* ---- 形状編集（Leaflet-Geoman） ---- */
 
-    function onMouseDown(e) {
-      start = e.latlng;
-      rect = global.L.rectangle([start, start], { color: '#ff5722', weight: 2, dashArray: '5,5', fillOpacity: 0.08 }).addTo(self.map);
+  /* 指定フィーチャのレイヤを編集モードにする（点はドラッグ移動、線/面は頂点編集）。
+   * 非表示・Geoman未読込などで開始できなければfalse。 */
+  MapView.prototype.startGeometryEdit = function (id) {
+    var layer = this.layerObjects.get(id);
+    if (!layer || !layer.pm || !this.featureGroup.hasLayer(layer)) return false;
+    this.stopGeometryEdit();
+    layer.closePopup();
+    layer.unbindPopup(); // 編集中のクリックでポップアップを出さない（確定/取消時の再描画で復帰）
+    layer.pm.enable({
+      snappable: true,
+      allowSelfIntersection: true,
+      // 点: 右クリックでマーカーごと消えるのを防ぐ。線/面: 頂点の右クリック削除は許可する
+      preventMarkerRemoval: !!layer.getLatLng,
+      removeLayerBelowMinVertexCount: false  // 頂点を減らし過ぎてレイヤごと消えるのを防ぐ
+    });
+    var el = layer.getElement && layer.getElement();
+    if (el) el.classList.add('mpv-editing');
+    this._editingId = id;
+    return true;
+  };
+
+  /* 編集中レイヤの現在の座標を内部表現で返す。編集中でなければnull。 */
+  MapView.prototype.getEditedCoords = function (type) {
+    var layer = this._editingId != null ? this.layerObjects.get(this._editingId) : null;
+    return layer ? layerToCoords(type, layer) : null;
+  };
+
+  /* 編集モードを終了する。レイヤの見た目は呼び出し側が再描画して確定/復元すること。 */
+  MapView.prototype.stopGeometryEdit = function () {
+    if (this._editingId == null) return;
+    var layer = this.layerObjects.get(this._editingId);
+    this._editingId = null;
+    if (!layer) return;
+    if (layer.pm) layer.pm.disable();
+    var el = layer.getElement && layer.getElement();
+    if (el) el.classList.remove('mpv-editing');
+  };
+
+  /* Leafletレイヤ → 内部座標（[緯度,経度]、丸め済み） */
+  function layerToCoords(type, layer) {
+    // 世界地図を横にスクロールした先（経度±180の外）で描いた図形は、形を保ったまま360°単位でずらして戻す。
+    // 頂点ごとに折り返すと、±180°をまたぐ線や面が地球を一周する形に壊れるため、先頭の頂点を基準に全体を動かす。
+    var first = type === 'point' ? layer.getLatLng() : type === 'line' ? layer.getLatLngs()[0] : (layer.getLatLngs()[0] || [])[0];
+    var shift = first ? 360 * Math.round((first.wrap().lng - first.lng) / 360) : 0; // 範囲内なら厳密に0
+    var pt = function (p) { return [round(p.lat), round(p.lng + shift)]; };
+    if (type === 'point') return pt(layer.getLatLng());
+    if (type === 'line') return layer.getLatLngs().map(pt);
+    return layer.getLatLngs().map(function (ring) { return ring.map(pt); }); // polygon: リング配列
+  }
+
+  /* ---- 検索地点・現在地 ---- */
+
+  /* 検索地点へ移動してマーカーを立てる。action: { label, onClick } を渡すとポップアップにボタンを出す。 */
+  MapView.prototype.showSearchMarker = function (latlng, title, action) {
+    this.clearSearchMarker();
+    var node = document.createElement('div');
+    node.className = 'mpv-popup';
+    var name = document.createElement('b');
+    name.textContent = title;
+    node.appendChild(name);
+    var coords = document.createElement('small');
+    coords.textContent = round(latlng[0]) + ', ' + round(latlng[1]);
+    node.appendChild(document.createElement('br'));
+    node.appendChild(coords);
+    if (action) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mpv-mini mpv-popup__action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', action.onClick);
+      node.appendChild(btn);
     }
-    function onMouseMove(e) {
-      if (!start || !rect) return;
-      rect.setBounds(global.L.latLngBounds(start, e.latlng));
+    this.map.setView(latlng, Math.max(this.map.getZoom(), 15));
+    this.searchMarker = global.L.marker(latlng, {
+      icon: global.Symbols.divIcon('🔍', SEARCH_COLOR),
+      zIndexOffset: 1000,
+      pmIgnore: true
+    }).addTo(this.map).bindPopup(node).openPopup();
+  };
+
+  MapView.prototype.clearSearchMarker = function () {
+    if (this.searchMarker) { this.map.removeLayer(this.searchMarker); this.searchMarker = null; }
+  };
+
+  /* 現在地の取得結果を受けるリスナ（initMapで1回だけ登録）。
+   * 許可ダイアログを放置・無視されるとどちらのイベントも来ないため、
+   * 「取得中」フラグで再実行を塞がず、最後に指定されたコールバックへ結果を渡す。
+   * 連打で複数の要求が走った場合は届いた順に通知する（先の要求が失敗しても、後の成功で表示が更新される）。 */
+  MapView.prototype._watchLocation = function () {
+    var self = this, map = this.map;
+    map.on('locationfound', function (e) {
+      if (self.locationLayer) map.removeLayer(self.locationLayer);
+      self.locationLayer = global.L.layerGroup([
+        global.L.circle(e.latlng, { radius: e.accuracy, color: '#1565c0', weight: 1, fillOpacity: 0.12, interactive: false, pmIgnore: true }),
+        global.L.circleMarker(e.latlng, { radius: 6, color: '#fff', weight: 2, fillColor: '#1565c0', fillOpacity: 1, interactive: false, pmIgnore: true })
+      ]).addTo(map);
+      var cb = self._locateCallbacks;
+      if (cb && cb.onDone) cb.onDone();
+    });
+    map.on('locationerror', function (e) {
+      var cb = self._locateCallbacks;
+      if (cb && cb.onError) cb.onError(e);
+    });
+  };
+
+  /* 現在地へ移動し、位置と精度円を表示する。成功時 onDone()、失敗時 onError(event) を呼ぶ。 */
+  MapView.prototype.locate = function (onDone, onError) {
+    this._locateCallbacks = { onDone: onDone, onError: onError };
+    this.map.locate({ setView: true, maxZoom: 16, enableHighAccuracy: true, timeout: 10000 });
+  };
+
+  /* ---- 矩形選択 ---- */
+
+  /* ドラッグで矩形を1つ描き、bbox GeoJSON(Polygon)を onDone に返してセッションを終える。
+   * Pointer Events を使うのでマウス・タッチ・ペンのいずれでも操作できる。
+   * ドラッグを伴わないクリック/タップは無視してセッションを継続する。戻り値は中断用の関数。 */
+  MapView.prototype.startRectangleSelect = function (onDone) {
+    var self = this, map = this.map;
+    var container = map.getContainer();
+    var start = null, startPx = null, rect = null, pointerId = null;
+    var prevTouchAction = container.style.touchAction;
+    this.clearSelectionRect();
+    map.dragging.disable();
+    container.style.cursor = 'crosshair';
+    // 1本指ドラッグをブラウザのスクロール/更新ジェスチャに取られないようにする
+    // （LeafletのCSSより優先させるためインラインで指定）
+    container.style.touchAction = 'none';
+
+    function onDown(e) {
+      if (e.isPrimary === false) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target && e.target.closest && e.target.closest('.leaflet-control')) return; // ズームボタン等は通す
+      if (start) discardDrag(); // pointerupを取り逃した前回のドラッグが残っていれば捨てる
+      pointerId = e.pointerId;
+      start = map.mouseEventToLatLng(e);
+      startPx = [e.clientX, e.clientY];
+      rect = global.L.rectangle([start, start], {
+        color: SEARCH_COLOR, weight: 2, dashArray: '5,5', fillOpacity: 0.08, interactive: false, pmIgnore: true
+      }).addTo(map);
+      e.preventDefault(); // テキスト選択や画像ドラッグを起こさない
     }
-    function onMouseUp(e) {
-      if (!start) { cleanup(); return; }
-      // mouseupがマップ外でも拾えるよう、latlngが無ければ最後のrect境界を使う
-      var endLatLng = (e && e.latlng) ? e.latlng : (rect ? rect.getBounds().getNorthEast() : start);
-      var b = global.L.latLngBounds(start, endLatLng);
-      // クリックのみ（ドラッグ無し）の極小矩形は無効として破棄
-      if (!b.isValid() || (b.getNorth() === b.getSouth() && b.getEast() === b.getWest())) {
-        if (rect) self.map.removeLayer(rect);
-        cleanup();
+    function onMove(e) {
+      if (!start || e.pointerId !== pointerId) return;
+      rect.setBounds(global.L.latLngBounds(start, map.mouseEventToLatLng(e)));
+    }
+    function onUp(e) {
+      if (!start || e.pointerId !== pointerId) return;
+      var b = global.L.latLngBounds(start, map.mouseEventToLatLng(e));
+      // クリック/タップや手ぶれ程度の移動は範囲指定とみなさず、次のドラッグを待つ
+      var tooSmall = Math.abs(e.clientX - startPx[0]) < MIN_DRAG_PX || Math.abs(e.clientY - startPx[1]) < MIN_DRAG_PX;
+      if (tooSmall || !b.isValid()) {
+        discardDrag();
         return;
       }
+      rect.setBounds(b);
       self.selectionRect = rect;
       cleanup();
-      var gj = boundsToGeoJSON(b);
-      if (onDone) onDone(gj, b);
+      swallowNextClick();
+      if (onDone) onDone(boundsToGeoJSON(b), b);
+    }
+    // ドラッグの始点と終点が同じフィーチャ上だとclickが発生し、選択やポップアップが動いてしまうのを防ぐ
+    function swallowNextClick() {
+      function swallow(e) { e.stopPropagation(); e.preventDefault(); }
+      container.addEventListener('click', swallow, true);
+      setTimeout(function () { container.removeEventListener('click', swallow, true); }, 0);
+    }
+    function discardDrag() {
+      if (rect) map.removeLayer(rect);
+      rect = null; start = null; startPx = null; pointerId = null;
+    }
+    function onCancel(e) {
+      if (start && e.pointerId === pointerId) discardDrag();
     }
     function cleanup() {
-      self.map.off('mousedown', onMouseDown);
-      self.map.off('mousemove', onMouseMove);
-      self.map.off('mouseup', onMouseUp);
-      document.removeEventListener('mouseup', onDocUp, true);
-      self.map.dragging.enable();
-      self.map.getContainer().style.cursor = '';
+      container.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onCancel);
+      map.dragging.enable();
+      container.style.cursor = '';
+      container.style.touchAction = prevTouchAction;
       // 未確定（途中キャンセル）の矩形が残っていれば除去
-      if (rect && rect !== self.selectionRect) { self.map.removeLayer(rect); rect = null; }
-      start = null;
+      if (rect && rect !== self.selectionRect) map.removeLayer(rect);
+      rect = null; start = null; startPx = null; pointerId = null;
     }
-    // マップコンテナ外でマウスを離したケースの保険
-    function onDocUp() { if (start) onMouseUp(null); }
 
-    this.map.on('mousedown', onMouseDown);
-    this.map.on('mousemove', onMouseMove);
-    this.map.on('mouseup', onMouseUp);
-    document.addEventListener('mouseup', onDocUp, true);
+    container.addEventListener('pointerdown', onDown);
+    // コンテナ外で指/ボタンを離しても拾えるよう document で受ける
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
 
-    // キャンセル用
     return cleanup;
   };
 
@@ -249,17 +467,21 @@
   }
 
   function popupHtml(feature, tag) {
+    var esc = global.Util.escapeHtml;
     var tr = global.I18n ? global.I18n.t : function (key) { return key; };
     var typeLabel = global.I18n ? global.I18n.typeLabel(feature.type) : feature.type;
-    var name = global.Symbols.escapeHtml(feature.name || feature.id || tr('unnamed'));
-    var tagName = tag ? global.Symbols.escapeHtml(tag.name || tag.id) : global.Symbols.escapeHtml(tr('uncategorized'));
-    return '<div class="mpv-popup"><b>' + name + '</b><br><small>' + tagName + ' / ' + global.Symbols.escapeHtml(typeLabel) + '</small></div>';
+    var name = esc(feature.name || feature.id || tr('unnamed'));
+    var tagName = esc(tag ? (tag.name || tag.id) : tr('uncategorized'));
+    return '<div class="mpv-popup"><b>' + name + '</b><br><small>' + tagName + ' / ' + esc(typeLabel) + '</small></div>';
   }
 
   function round(n) { return global.Util.round(n); }
+  function has(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
 
   global.MapView = MapView;
   global.MapView.BASE_DEFS = BASE_DEFS;
   global.MapView.OVERLAY_DEFS = OVERLAY_DEFS;
+  global.MapView.DEFAULT_OVERLAY_OPACITY = DEFAULT_OVERLAY_OPACITY;
   global.MapView.boundsToGeoJSON = boundsToGeoJSON;
+  global.MapView.layerToCoords = layerToCoords;
 })(typeof window !== 'undefined' ? window : this);
