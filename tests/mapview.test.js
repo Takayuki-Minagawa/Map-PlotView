@@ -51,3 +51,30 @@ test('オーバーレイ定義: すべてhttpsのタイルURLと出典を持つ'
     assert.ok(defs[k].attr && defs[k].max >= 15, k);
   });
 });
+
+test('layerToCoords: 範囲内の座標にずれを加えない / 空の面でも例外にしない', () => {
+  const MapView = newMapView();
+  assert.deepEqual(MapView.layerToCoords('point', { getLatLng: () => ll(35.6812345, 139.7671234) }), [35.681235, 139.767123]);
+  assert.deepEqual(MapView.layerToCoords('polygon', { getLatLngs: () => [] }), []);
+});
+
+test('setBaseLayer / toggleOverlay: 未知の名前（constructor 等）は既定の背景へ / 無視する', () => {
+  const MapView = newMapView();
+  const added = [];
+  const layer = name => ({ addTo() { added.push(name); } });
+  const self = {
+    baseLayers: { pale: layer('pale'), osm: layer('osm') },
+    overlayLayers: { afm: layer('afm') },
+    currentBaseKey: null,
+    map: { removeLayer() {}, hasLayer: () => false }
+  };
+  ['constructor', '__proto__', 'toString', 'nosuch'].forEach(key => {
+    MapView.prototype.setBaseLayer.call(self, key);
+    assert.equal(self.currentBaseKey, 'pale', key);
+    assert.equal(MapView.prototype.toggleOverlay.call(self, key, true), false, key);
+  });
+  MapView.prototype.setBaseLayer.call(self, 'osm');
+  assert.equal(self.currentBaseKey, 'osm');
+  assert.equal(MapView.prototype.toggleOverlay.call(self, 'afm', true), true);
+  assert.deepEqual(added, ['pale', 'pale', 'pale', 'pale', 'osm', 'afm']);
+});

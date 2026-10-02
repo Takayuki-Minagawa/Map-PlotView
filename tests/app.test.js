@@ -275,6 +275,8 @@ test('矩形選択: 完了で抽出結果を更新し、削除したフィーチ
     bbox: [138, 34, 141, 37]
   });
   assert.deepEqual(h.cap.selectionList.map(f => f.id), ['p1', 'g1']);
+  assert.equal(h.el('editBar').hidden, true, '完了したら操作バーを隠す');
+  assert.equal(h.el('btnUndo').disabled, false, '履歴ボタンも使える状態へ戻る');
   h.cap.detail.onDelete({ id: 'p1' });
   assert.deepEqual(h.cap.selectionList.map(f => f.id), ['g1']);
   h.App.undo();

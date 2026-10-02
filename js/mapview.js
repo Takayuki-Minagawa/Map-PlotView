@@ -296,8 +296,8 @@
   function layerToCoords(type, layer) {
     // 世界地図を横にスクロールした先（経度±180の外）で描いた図形は、形を保ったまま360°単位でずらして戻す。
     // 頂点ごとに折り返すと、±180°をまたぐ線や面が地球を一周する形に壊れるため、先頭の頂点を基準に全体を動かす。
-    var first = type === 'point' ? layer.getLatLng() : type === 'line' ? layer.getLatLngs()[0] : layer.getLatLngs()[0][0];
-    var shift = first ? first.wrap().lng - first.lng : 0;
+    var first = type === 'point' ? layer.getLatLng() : type === 'line' ? layer.getLatLngs()[0] : (layer.getLatLngs()[0] || [])[0];
+    var shift = first ? 360 * Math.round((first.wrap().lng - first.lng) / 360) : 0; // 範囲内なら厳密に0
     var pt = function (p) { return [round(p.lat), round(p.lng + shift)]; };
     if (type === 'point') return pt(layer.getLatLng());
     if (type === 'line') return layer.getLatLngs().map(pt);
