@@ -107,7 +107,7 @@
   };
 
   MapView.prototype.setBaseLayer = function (key) {
-    if (!this.baseLayers[key]) key = 'pale';
+    if (!has(BASE_DEFS, key)) key = 'pale'; // 外部ファイル由来の未知の名前（'constructor' 等を含む）は既定へ
     if (this.currentBaseKey && this.baseLayers[this.currentBaseKey]) {
       this.map.removeLayer(this.baseLayers[this.currentBaseKey]);
     }
@@ -116,8 +116,8 @@
   };
 
   MapView.prototype.toggleOverlay = function (key, on) {
+    if (!has(OVERLAY_DEFS, key)) return false;
     var layer = this.overlayLayers[key];
-    if (!layer) return false;
     var isOn = this.map.hasLayer(layer);
     var want = (typeof on === 'boolean') ? on : !isOn;
     if (want && !isOn) layer.addTo(this.map);
@@ -476,6 +476,7 @@
   }
 
   function round(n) { return global.Util.round(n); }
+  function has(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
 
   global.MapView = MapView;
   global.MapView.BASE_DEFS = BASE_DEFS;

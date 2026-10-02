@@ -144,9 +144,7 @@
     var tagOpts = tags.map(function (t) {
       return '<option value="' + esc(t.id) + '"' + (t.id === feature.tag ? ' selected' : '') + '>' + esc(t.name || t.id) + '</option>';
     }).join('');
-    var propsText = Object.keys(feature.properties || {}).map(function (k) {
-      return k + ': ' + formatVal(feature.properties[k]);
-    }).join('\n');
+    var propsText = formatProps(feature.properties);
 
     var body =
       field('id', tr('fieldId'), '<input name="id" value="' + esc(feature.id || '') + '" ' + (isNew ? '' : 'readonly') + '>') +
@@ -268,18 +266,29 @@
     return '<select name="symbol">' + opts + '</select>';
   }
 
-  /* 「key: value」を1行1項目で解釈する。コロンの無い行は直前の項目の続き（複数行の値）として扱う。 */
+  var PROP_INDENT = '  ';
+
+  /* 表示項目 → 編集欄のテキスト（key: value を1行1項目）。値の2行目以降は字下げして続きの行だと分かるようにする。 */
+  function formatProps(props) {
+    return Object.keys(props || {}).map(function (k) {
+      return k + ': ' + formatVal(props[k]).replace(/\n/g, '\n' + PROP_INDENT);
+    }).join('\n');
+  }
+
+  /* 編集欄のテキスト → 表示項目。字下げされた行は直前の項目の続き（複数行の値）、
+   * 字下げもコロンも無い行は無視する。 */
   function parseProps(text) {
     var raw = {}, last = null;
     (text || '').split('\n').forEach(function (line) {
+      if (last != null && /^[ \t]/.test(line)) {
+        raw[last] += '\n' + line.replace(/^( {1,2}|\t)/, '');
+        return;
+      }
       var i = line.indexOf(':');
       var k = i === -1 ? '' : line.slice(0, i).trim();
-      if (k) {
-        raw[k] = line.slice(i + 1);
-        last = k;
-      } else if (i === -1 && last != null && line.trim() !== '') {
-        raw[last] += '\n' + line;
-      }
+      if (!k) return;
+      raw[k] = line.slice(i + 1);
+      last = k;
     });
     var o = {};
     Object.keys(raw).forEach(function (k) { o[k] = global.Util.parseScalar(raw[k]); });
@@ -371,6 +380,7 @@
 
   UI.toCSV = toCSV;
   UI.parseProps = parseProps;
+  UI.formatProps = formatProps;
   UI.choose = choose;
   UI.toGeoJSONCollection = toGeoJSONCollection;
   global.UI = UI;

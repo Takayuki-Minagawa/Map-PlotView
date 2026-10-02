@@ -67,16 +67,25 @@ test('parseProps: key: value を解釈し、値の型を推定する', () => {
   });
   assert.deepEqual(UI.parseProps(''), {});
   assert.deepEqual(UI.parseProps('先頭の行にキーが無い\nk: v'), { k: 'v' });
+  assert.deepEqual(UI.parseProps('階数: 12\nコロンも字下げも無い行'), { 階数: 12 }, '迷い込んだ行は無視（値の型を変えない）');
 });
 
-test('parseProps: コロンの無い行は直前の項目の続きとして保持する（複数行の値を消さない）', () => {
+test('parseProps: 字下げした行は直前の項目の続きとして保持する（複数行の値を消さない）', () => {
   const { UI } = newUI();
-  assert.deepEqual(UI.parseProps('備考: 1行目\n2行目\n\n3行目\n階数: 3'), { 備考: '1行目\n2行目\n3行目', 階数: 3 });
+  assert.deepEqual(UI.parseProps('備考: 1行目\n  2行目\n\t3行目\n階数: 3'), { 備考: '1行目\n2行目\n3行目', 階数: 3 });
+});
+
+test('formatProps → parseProps: 複数行・空行・コロンを含む値も元どおりに戻る', () => {
+  const { UI } = newUI();
+  const props = { memo: 'a\n\nb', ref: 'see\nurl: http://x', url: 'http://y', n: 12, indented: 'x\n  y' };
+  assert.equal(UI.formatProps({ a: 'x\ny', b: 1 }), 'a: x\n  y\nb: 1');
+  assert.deepEqual(UI.parseProps(UI.formatProps(props)), props);
+  assert.equal(UI.formatProps(undefined), '');
 });
 
 test('parseProps: 編集画面を開いて保存しても値が書き換わらない', () => {
   const { UI, Util } = newUI();
   const props = { tel: '+81312345678', ver: '1.10', code: '007', big: '12345678901234567890', n: 12, memo: 'a\nb' };
-  const text = Object.keys(props).map(k => k + ': ' + Util.formatVal(props[k])).join('\n'); // 編集画面の表示形式
-  assert.deepEqual(UI.parseProps(text), props);
+  void Util;
+  assert.deepEqual(UI.parseProps(UI.formatProps(props)), props);
 });

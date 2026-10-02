@@ -340,3 +340,13 @@ test('parseYaml: マージキー(<<)が使える', () => {
   assert.equal(doc.features[0].type, 'point');
   assert.equal(doc.features[0].tag, 'a');
 });
+
+test('isSafeColor: CSSの色関数は通し、url()・var()・宣言の区切りは通さない', () => {
+  const Store = newStore();
+  ['#abc', '#2e7d32ff', 'rebeccapurple', 'rgb(1, 2, 3)', 'rgba(1,2,3,.5)', 'hsl(120deg, 50%, 50%)', 'oklch(60% 0.15 50)'].forEach(c => {
+    assert.equal(Store.isSafeColor(c), true, c);
+  });
+  ['url(x)', 'var(--x)', 'red;color:blue', 'rgb(1,2,3);x', 'expression(1)', '', '#', 'image-set(x)'].forEach(c => {
+    assert.equal(Store.isSafeColor(c), false, c);
+  });
+});

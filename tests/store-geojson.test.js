@@ -180,7 +180,7 @@ test('parseGeoJSON: toGeoJSONCollection出力を再インポートできる（�
 
 test('parseGeoJSON: 先頭のBOMを許容する', () => {
   const Store = newStore();
-  const doc = Store.parseGeoJSON('﻿' + fc([
+  const doc = Store.parseGeoJSON('\ufeff' + fc([
     { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [139, 35] } }
   ]));
   assert.equal(doc.features.length, 1);

@@ -30,10 +30,11 @@
   /* プロトタイプ由来のキー（constructor, toString 等）と衝突しない参照表 */
   function dict() { return Object.create(null); }
 
-  /* CSSへ埋め込んでよい色表記か（#hex / 色名 / rgb()・hsl()）。外部ファイル由来の値をstyle属性へ入れる前に確認する。 */
+  /* CSSへ埋め込んでよい色表記か（#hex / 色名 / rgb()・hsl() などの色関数）。
+   * url() や var()、宣言の区切り(;)を含むものは通さない。外部ファイル由来の値をstyle属性へ入れる前に確認する。 */
   function isSafeColor(c) {
     return typeof c === 'string' &&
-      /^(#[0-9a-f]{3,8}|[a-z]+|(rgb|hsl)a?\([0-9.,%\s/]+\))$/i.test(c.trim());
+      /^(#[0-9a-f]{3,8}|[a-z]+|(rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([0-9a-z.,%\s/+-]+\))$/i.test(c.trim());
   }
 
   function inLatRange(lat) { return isFiniteNumber(lat) && lat >= -90 && lat <= 90; }
@@ -289,7 +290,7 @@
   function parseCSV(text) {
     var src = String(text == null ? '' : text).replace(/^\ufeff/, '');
     // Excelが付ける区切り指定行（sep=;）があればそれに従う
-    var sep = /^sep=(.)\r?\n/i.exec(src);
+    var sep = /^sep=(.)(\r\n|\r|\n)/i.exec(src);
     if (sep) src = src.slice(sep[0].length);
     var parsed = parseCSVRows(src, sep ? sep[1] : detectDelimiter(src));
     var rows = parsed.rows;
@@ -382,7 +383,7 @@
       }
       if (ch === '"') { inQuote = !inQuote; seen = true; }
       else if (!inQuote && counts[ch] != null) counts[ch]++;
-      else if (ch !== ' ') seen = true;
+      else if (!/\s/.test(ch)) seen = true; // 全角空白なども空行扱い
     }
     if (counts['\t'] > counts[','] && counts['\t'] >= counts[';']) return '\t';
     if (counts[';'] > counts[',']) return ';';
@@ -523,7 +524,20 @@
     if (ext === 'csv' || ext === 'tsv') return 'csv';
     if (ext === 'geojson' || ext === 'json') return 'geojson';
     if (ext === 'yaml' || ext === 'yml') return 'yaml';
-    return /^\s*[{[]/.test(String(text || '')) ? 'geojson' : 'yaml';
+    // 拡張子で分からないもの（Excelの「Unicodeテキスト」= .txt など）は内容で判定する
+    var src = String(text || '');
+    if (/^\s*[{[]/.test(src)) return 'geojson';
+    return looksLikeCsvHeader(src) ? 'csv' : 'yaml';
+  }
+
+  /* 最初の空でない行が、緯度・経度の見出しを含む区切りテキストか */
+  function looksLikeCsvHeader(text) {
+    var line = String(text).replace(/^\ufeff/, '').split(/\r\n|\r|\n/).filter(function (l) { return l.trim() !== ''; })[0] || '';
+    var cells = line.split(/[,\t;]/).map(function (c) { return c.trim().replace(/^"|"$/g, '').toLowerCase(); });
+    var hasAlias = function (field) {
+      return cells.some(function (c) { return CSV_ALIASES[field].indexOf(c) !== -1; });
+    };
+    return cells.length >= 2 && hasAlias('lat') && hasAlias('lng');
   }
 
   /* 形式名に応じたパーサで読み込む。未知の形式はYAMLとして扱う。 */

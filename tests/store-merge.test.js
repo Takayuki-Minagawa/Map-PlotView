@@ -104,3 +104,11 @@ test('mergeData: 多数の衝突でも採番が重複しない', () => {
   assert.equal(out.warnings.length, 300);
   assert.equal(out.features[300].id, 'p301');
 });
+
+test('detectFormat: 拡張子で分からなくても緯度経度の見出しがあればCSVと判定する', () => {
+  const Store = newStore();
+  assert.equal(Store.detectFormat('export.txt', '名称\t緯度\t経度\nA\t35\t139'), 'csv', 'Excelの「Unicodeテキスト」');
+  assert.equal(Store.detectFormat('data', '"name","lat","lng"\nA,35,139'), 'csv');
+  assert.equal(Store.detectFormat('notes.txt', 'lat: 35\nlng: 139'), 'yaml', '区切りの無い行はCSVとみなさない');
+  assert.equal(Store.detectFormat('data.yaml', 'name,lat,lng'), 'yaml', '拡張子が分かるときは拡張子を優先');
+});

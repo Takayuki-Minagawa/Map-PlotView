@@ -214,6 +214,18 @@ test('セッション中は元に戻す/やり直しを受け付けない（作�
   assert.equal(h.mapview._editingId, null);
   h.App.undo();
   assert.deepEqual(h.ids(), []);
+
+  // やり直しも、作図・矩形選択の最中は受け付けない
+  h.el('btnAddPoint').fire('click');
+  h.App.redo();
+  assert.deepEqual(h.ids(), []);
+  h.key({ key: 'Escape' });
+  h.el('btnRectSelect').fire('click');
+  h.App.redo();
+  assert.deepEqual(h.ids(), []);
+  h.key({ key: 'Escape' });
+  h.App.redo();
+  assert.deepEqual(h.ids(), ['p1', 'g1']);
 });
 
 test('キー操作: 作図中のCtrl+Zは頂点の取消、通常時は元に戻す、入力欄と変換中は無視', () => {

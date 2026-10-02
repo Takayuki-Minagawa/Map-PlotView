@@ -187,3 +187,9 @@ test('parseCSV: IDの無い大量の行でも採番が行数に比例した時�
   assert.equal(doc.features[19999].id, 'p20000');
   assert.ok(ms < 3000, '20000行で ' + ms + 'ms（採番が毎回1から探し直していると数十秒かかる）');
 });
+
+test('parseCSV: sep= 行の改行がCRだけでも、全角空白だけの先頭行があっても区切りを判定できる', () => {
+  const Store = newStore();
+  assert.equal(Store.parseCSV('SEP=;\rname;lat;lng\rA;35;139').features.length, 1);
+  assert.equal(Store.parseCSV('\u3000\nname\tlat\tlng\nA\t35\t139').features.length, 1);
+});
