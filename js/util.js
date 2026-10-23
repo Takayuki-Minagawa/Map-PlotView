@@ -37,6 +37,20 @@
     return (!isNaN(n) && String(n) === v) ? n : v;
   }
 
+  /* 距離（m）の表示用文字列。1km以上はkm表記 */
+  function formatDistance(m) {
+    if (!isFinite(m)) return '';
+    if (m >= 1000) return (m / 1000).toFixed(3) + ' km';
+    return (m < 10 ? m.toFixed(1) : String(Math.round(m))) + ' m';
+  }
+
+  /* 面積（m²）の表示用文字列。1km²以上はkm²表記 */
+  function formatArea(a) {
+    if (!isFinite(a)) return '';
+    if (a >= 1e6) return (a / 1e6).toFixed(3) + ' km²';
+    return Math.round(a) + ' m²';
+  }
+
   /* ファイル内容(ArrayBuffer)を文字列へ。BOM付きUTF-16（Excelの「Unicodeテキスト」）はそのまま復号し、
    * それ以外はUTF-8、UTF-8として不正ならShift_JIS（Excelの既定CSV）とみなす。 */
   function decodeText(buffer) {
@@ -67,6 +81,8 @@
     round: round,
     toNumber: toNumber,
     parseScalar: parseScalar,
+    formatDistance: formatDistance,
+    formatArea: formatArea,
     decodeText: decodeText,
     syncBackgroundInert: syncBackgroundInert
   };
