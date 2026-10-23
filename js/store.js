@@ -579,8 +579,9 @@
     var kinds = ['IconStyle', 'LineStyle', 'PolyStyle'];
     for (var i = 0; i < kinds.length; i++) {
       var el = childElements(style, kinds[i])[0];
-      var c = el && kmlColorToHex(childText(el, 'color'));
-      if (c) return c;
+      var raw = el ? childText(el, 'color') : '';
+      var c = kmlColorToHex(raw);
+      if (c && !/^\s*#?00/.test(raw)) return c; // 透明（非表示）の指定は代表色にしない
     }
     return null;
   }
@@ -598,7 +599,7 @@
       if (!id) return;
       childElements(sm, 'Pair').forEach(function (pair) {
         if (childText(pair, 'key') !== 'normal') return;
-        var c = colors[childText(pair, 'styleUrl').replace(/^[^#]*/, '')];
+        var c = colors[childText(pair, 'styleUrl')];
         if (c) colors['#' + id] = c;
       });
     });
@@ -610,8 +611,8 @@
     var inline = childElements(pm, 'Style')[0];
     var c = inline && styleColor(inline);
     if (c) return c;
-    var url = childText(pm, 'styleUrl').replace(/^[^#]*/, ''); // 同一文書内の参照（#id）だけを見る
-    return url ? colors[url] || null : null;
+    var url = childText(pm, 'styleUrl'); // 同一文書内の参照（#id）だけを見る（他ファイルの style は読めない）
+    return url.charAt(0) === '#' ? colors[url] || null : null;
   }
 
   /* 最も近い親 Folder の名称 */
@@ -628,9 +629,11 @@
    * HTMLでは生の改行は空白と同じなので、改行は <br> や段落・表の行の終わりから作る（本アプリの書出もこの形）。 */
   function descriptionToText(s) {
     var text = String(s || '');
-    var isHtml = /<[a-z!/][^>]*>/i.test(text) || /&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(text);
+    // 実体参照だけで判断するのは改行を含まない場合に限る（改行入りのプレーンテキストの改行を消さない）
+    var isHtml = /<[a-z!/][^>]*>/i.test(text) || (!/\n/.test(text) && /&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(text));
     if (!isHtml) return text.trim();
     return text
+      .replace(/>\s*\n\s*/g, '>').replace(/\s*\n\s*</g, '<') // タグの間の整形用の改行・字下げは捨てる
       .replace(/[ \t]*\r?\n[ \t]*/g, ' ')
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')

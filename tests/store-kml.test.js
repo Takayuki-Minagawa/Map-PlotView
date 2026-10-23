@@ -136,6 +136,25 @@ test('parseKML: 他ツールの書き出し — 共有スタイル/StyleMap の�
   assert.equal(r.features[2].coordinates.length, 1, '中身の無い穴は捨てる');
 });
 
+test('parseKML: description — 整形用の改行・字下げ、改行入りプレーンテキストの実体参照', () => {
+  const { Store } = newStore();
+  const desc = d => Store.parseKML(`<kml><Placemark><description>${d}</description><Point><coordinates>139,35</coordinates></Point></Placemark></kml>`).features[0].note;
+  assert.equal(desc('<![CDATA[<p>a</p>\n<p>b</p>]]>'), 'a\nb');
+  assert.equal(desc('<![CDATA[line1<br>\n  line2]]>'), 'line1\nline2');
+  assert.equal(desc('<![CDATA[<table>\n<tr><td>A</td><td>1</td></tr>\n<tr><td>B</td><td>2</td></tr>\n</table>]]>'), 'A\t1\nB\t2');
+  assert.equal(desc('Price &amp;amp; tax\nline2'), 'Price &amp; tax\nline2', '改行のあるプレーンテキストはそのまま');
+});
+
+test('parseKML: 色 — 他ファイルの styleUrl は使わず、透明なアイコン色より線の色を使う', () => {
+  const { Store } = newStore();
+  const r = Store.parseKML(`<kml><Document>
+    <Style id="s1"><IconStyle><color>00ffffff</color></IconStyle><LineStyle><color>ff0000ff</color></LineStyle></Style>
+    <Folder><name>A</name><Placemark><styleUrl>#s1</styleUrl><Point><coordinates>139,35</coordinates></Point></Placemark></Folder>
+    <Folder><name>B</name><Placemark><styleUrl>other.kml#s1</styleUrl><Point><coordinates>139,35</coordinates></Point></Placemark></Folder>
+  </Document></kml>`);
+  assert.deepEqual(r.tags.map(t => [t.id, t.color]), [['A', '#ff0000'], ['B', '#1565c0']]);
+});
+
 test('parseKML: 1つのFolder名を別々のタグの表示名に使い回さない', () => {
   const { Store } = newStore();
   const pm = tag => `<Placemark><ExtendedData><Data name="tag"><value>${tag}</value></Data></ExtendedData><Point><coordinates>139,35</coordinates></Point></Placemark>`;
@@ -261,7 +280,7 @@ test('UI.toKML → parseKML: 山括弧・実体参照・空行・字下げを含
 test('UI.toKML: XMLに使えない文字（U+FFFF・対でないサロゲート）と指数表記の座標を出さない', () => {
   const { Store, UI } = newStore();
   const kml = UI.toKML([
-    { id: 'p1', type: 'point', tag: 't', name: 'a\uffffb' + '😀'.slice(0, 1) + 'c😀', coordinates: [1e-7, -2e-8] }
+    { id: 'p1', type: 'point', tag: 't', name: 'a\uffffb' + '😀'.slice(0, 1) + 'c😀\udc00\udc00', coordinates: [1e-7, -2e-8] }
   ], [], {});
   assert.doesNotMatch(kml, /e-/, '指数表記なし');
   const f = Store.parseKML(kml).features[0];

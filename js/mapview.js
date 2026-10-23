@@ -539,8 +539,10 @@
       var last = points[points.length - 1];
       guide.setLatLngs(mode === 'area' && points.length > 1 ? [last, e.latlng, points[0]] : [last, e.latlng]);
     }
+    function clearGuide() { guide.setLatLngs([]); }
     map.on('click', onClick);
     map.on('mousemove', onMove);
+    map.on('mouseout', clearGuide); // 地図の外（印刷ボタンなど）へ出たら案内線を残さない
 
     var session = {
       mode: mode,
@@ -555,6 +557,7 @@
       stop: function () {
         map.off('click', onClick);
         map.off('mousemove', onMove);
+        map.off('mouseout', clearGuide);
         [shape, guide, vertices].forEach(function (l) { map.removeLayer(l); });
         container.classList.remove('mpv-measuring');
         if (dblZoom) map.doubleClickZoom.enable();
