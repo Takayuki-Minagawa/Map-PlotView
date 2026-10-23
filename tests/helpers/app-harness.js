@@ -7,7 +7,20 @@ const path = require('node:path');
 const jsyaml = require('js-yaml');
 const { createSandbox, loadScript, ROOT } = require('./load');
 
-/* opts: { quota: true で localStorage.setItem を失敗させる, autosaved: 起動時に復元させるYAML } */
+/* classList の代わり（add / remove / contains / toggle だけ） */
+function classSet() {
+  const set = new Set();
+  return {
+    set,
+    add(c) { set.add(c); },
+    remove(c) { set.delete(c); },
+    contains(c) { return set.has(c); },
+    toggle(c, on) { if (on === undefined ? !set.has(c) : on) set.add(c); else set.delete(c); }
+  };
+}
+
+/* opts: { quota: true で localStorage.setItem を失敗させる, autosaved: 起動時に復元させるYAML,
+ *         clipboard: navigator.clipboard の代わり（省略時はクリップボード無し） } */
 function makeApp(opts) {
   opts = opts || {};
   const s = createSandbox({ jsyaml });
@@ -34,7 +47,7 @@ function makeApp(opts) {
     querySelectorAll: () => [],
     querySelector: () => null,
     addEventListener(ev, fn) { docListeners[ev] = fn; },
-    body: { classList: { toggle() {} }, appendChild() {} },
+    body: { classList: classSet(), appendChild() {} },
     createElement: () => el('_tmp')
   };
   const store = {};
@@ -44,7 +57,11 @@ function makeApp(opts) {
     getItem: k => (k in store ? store[k] : null),
     setItem: (k, v) => { if (quota.fail) throw new Error('quota'); store[k] = v; }
   };
-  s.addEventListener = () => {};
+  const winListeners = {};
+  s.addEventListener = (ev, fn) => { winListeners[ev] = fn; };
+  s.navigator = opts.clipboard ? { clipboard: opts.clipboard } : {};
+  const printed = [];
+  s.print = () => printed.push(document.body.classList.contains('is-printing'));
 
   /* 地図のスタブ：描画したフィーチャと編集セッションだけを記録する */
   function MapView() {
@@ -70,7 +87,7 @@ function makeApp(opts) {
     };
   }
   Object.assign(MapView.prototype, {
-    initMap() {},
+    initMap(el, view, handlers) { this.handlers = handlers; },
     setBaseLayer(k) { this.currentBaseKey = k; },
     toggleOverlay() {},
     setOverlayOpacity(v) { this.overlayOpacity = v; },
@@ -89,7 +106,24 @@ function makeApp(opts) {
     },
     getEditedCoords() { return this._editingId != null ? this.editedCoords : null; },
     stopGeometryEdit() { this._editingId = null; },
-    startRectangleSelect(cb) { this.rectDone = cb; return () => { this.rectDone = null; }; }
+    startRectangleSelect(cb) { this.rectDone = cb; return () => { this.rectDone = null; }; },
+    openPointPopup(latlng, title, actions, anchor) { this.pointPopup = { latlng, title, actions, anchor }; },
+    /* 計測のスタブ：click(lat, lng) で頂点を足す */
+    startMeasure(mode, onChange) {
+      const points = [];
+      const self = this;
+      const session = {
+        mode,
+        click(lat, lng) { points.push([lat, lng]); onChange(points.slice()); },
+        undo() { if (!points.length) return false; points.pop(); onChange(points.slice()); return true; },
+        count: () => points.length,
+        coords: () => (mode === 'area' ? [points.slice()] : points.slice()),
+        stop() { self.measure = null; }
+      };
+      this.measure = session;
+      onChange([]);
+      return session;
+    }
   });
   MapView.OVERLAY_DEFS = {};
   MapView.DEFAULT_OVERLAY_OPACITY = 0.85;
@@ -111,8 +145,8 @@ function makeApp(opts) {
   const RealUI = s.UI;
   function UIStub(refs, handlers) { cap.ui = handlers; }
   Object.assign(UIStub.prototype, {
-    renderTagList(tags) { cap.tagList = tags; },
-    renderFeatureList(features) { cap.featureList = features; },
+    renderTagList(tags, hidden, counts) { cap.tagList = tags; cap.tagCounts = counts; },
+    renderFeatureList(features, tagsById, activeId, total) { cap.featureList = features; cap.featureTotal = total; },
     renderSelectionList(features) { cap.selectionList = features; },
     showWarnings(w) { cap.warnings = w; },
     renderSearchResults() {},
@@ -122,6 +156,7 @@ function makeApp(opts) {
   UIStub.toCSV = RealUI.toCSV;
   UIStub.parseProps = RealUI.parseProps;
   UIStub.toGeoJSONCollection = RealUI.toGeoJSONCollection;
+  UIStub.toKML = RealUI.toKML;
   /* 追加/置き換えの選択：cap.nextChoice に 'merge' | 'replace' を入れておくと即座に選ぶ（nullならキャンセル扱い） */
   UIStub.choose = (title, message, options, onPick) => {
     cap.chooseOptions = options;
@@ -138,7 +173,7 @@ function makeApp(opts) {
     fn => fn(), () => {});
 
   return {
-    App: s.App, state: s.App._state, Store: s.Store, cap, el, alerts, store, quota,
+    App: s.App, state: s.App._state, Store: s.Store, cap, el, alerts, store, quota, printed, winListeners, body: document.body,
     get mapview() { return mapview; },
     status: () => el('status').textContent,
     key(e) { return docListeners.keydown(Object.assign({ target: {}, preventDefault() {} }, e)); },

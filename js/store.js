@@ -427,15 +427,376 @@
     return { rows: rows, lines: lines };
   }
 
-  /* features に現れたタグIDからタグ定義を自動生成 */
-  function tagsFromFeatures(features) {
+  /* ---- KML / GPX（XML） ---- */
+
+  /* XMLテキスト → Document。ブラウザの DOMParser を使う（テストでは xmldom を注入する）。 */
+  function parseXml(text) {
+    var Parser = global.DOMParser;
+    if (!Parser) throw new Error(tr('xmlUnsupportedError'));
+    var doc;
+    try {
+      // XML宣言の前に空白・改行がある書き出し（サーバ生成のファイルなど）も読めるよう先頭の空白を除く
+      doc = new Parser({ onError: function () {} }).parseFromString(String(text == null ? '' : text).replace(/^[\ufeff\s]+/, ''), 'application/xml');
+    } catch (e) {
+      throw new Error(tr('xmlSyntaxError', { message: e.message }));
+    }
+    // ブラウザは例外を投げず、<parsererror> 要素を含む文書を返す
+    var err = doc && doc.getElementsByTagName('parsererror')[0];
+    if (!doc || !doc.documentElement || err) {
+      // Chrome/Safari は定型の前置き＋エラー内容＋後置きの文を返すので、エラー内容の行だけを出す
+      var detail = err ? String(err.textContent || '').replace(/^\s*This page contains the following errors:/, '').trim().split('\n')[0] : '';
+      throw new Error(tr('xmlSyntaxError', { message: detail.replace(/Below is a rendering.*$/, '').trim() }));
+    }
+    return doc;
+  }
+
+  /* 名前空間接頭辞（kml: / gx: など）を除いた要素名 */
+  function localName(node) {
+    return node.localName || String(node.nodeName || '').replace(/^.*:/, '');
+  }
+
+  /* 直下の子要素（name 指定時はその名前のものだけ） */
+  function childElements(el, name) {
+    var out = [];
+    for (var c = el.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 1 && (!name || localName(c) === name)) out.push(c);
+    }
+    return out;
+  }
+
+  function childText(el, name) {
+    var c = childElements(el, name)[0];
+    return c ? String(c.textContent || '').trim() : '';
+  }
+
+  /* 子孫要素を文書順に集める */
+  function descendants(el, name, out) {
+    out = out || [];
+    childElements(el).forEach(function (c) {
+      if (localName(c) === name) out.push(c);
+      descendants(c, name, out);
+    });
+    return out;
+  }
+
+  function xmlAttr(el, name) {
+    var v = el.getAttribute(name);
+    return v == null ? '' : String(v).trim();
+  }
+
+  /* 座標の数値。他のツールが書く指数表記（1.397e2 など）も受け付ける。空文字や数値でないものはNaN */
+  function coordNumber(s) {
+    var v = String(s == null ? '' : s).trim();
+    return /^[-+]?(\d+(\.\d*)?|\.\d+)(e[-+]?\d+)?$/i.test(v) ? parseFloat(v) : NaN;
+  }
+
+  function latLngOf(lat, lng) {
+    return [global.Util.round(coordNumber(lat)), global.Util.round(coordNumber(lng))];
+  }
+
+  /* 閉じたリング（始点＝終点）を内部表現の開いたリングへ */
+  function openRing(r) {
+    var n = r.length;
+    if (n > 1 && r[0][0] === r[n - 1][0] && r[0][1] === r[n - 1][1]) return r.slice(0, -1);
+    return r;
+  }
+
+  /* <coordinates>経度,緯度[,高さ] …</coordinates> → [[緯度,経度], …] */
+  function kmlCoords(el) {
+    if (!el) return [];
+    // 区切りは空白。「139.7, 35.6」のようにカンマの前後へ空白を入れた書き出しもあるので先に詰める
+    return String(el.textContent || '').replace(/\s*,\s*/g, ',').trim().split(/\s+/).filter(Boolean).map(function (tuple) {
+      var p = tuple.split(',');
+      return latLngOf(p[1], p[0]);
+    });
+  }
+
+  /* 要素の直下にある形状を集める（MultiGeometry / gx:MultiTrack は展開する）。
+   * 戻り値の要素は {type, coordinates} または未対応の {unsupported: 要素名}。 */
+  function kmlGeometries(el, out) {
+    childElements(el).forEach(function (g) {
+      var n = localName(g);
+      var coordsEl = childElements(g, 'coordinates')[0];
+      if (n === 'Point') {
+        out.push({ type: 'point', coordinates: kmlCoords(coordsEl)[0] });
+      } else if (n === 'LineString') {
+        out.push({ type: 'line', coordinates: kmlCoords(coordsEl) });
+      } else if (n === 'LinearRing') {
+        out.push({ type: 'polygon', coordinates: [openRing(kmlCoords(coordsEl))] });
+      } else if (n === 'Polygon') {
+        var rings = [];
+        childElements(g, 'outerBoundaryIs').concat(childElements(g, 'innerBoundaryIs')).forEach(function (b, bi) {
+          childElements(b, 'LinearRing').forEach(function (r) {
+            var ring = openRing(kmlCoords(childElements(r, 'coordinates')[0]));
+            if (ring.length || bi === 0) rings.push(ring); // 中身の無い穴は捨てる（外周は検証に任せる）
+          });
+        });
+        out.push({ type: 'polygon', coordinates: rings });
+      } else if (n === 'Track') {
+        // gx:Track: <gx:coord>経度 緯度 高さ</gx:coord> の並び
+        out.push({
+          type: 'line',
+          coordinates: childElements(g, 'coord').map(function (c) {
+            var p = String(c.textContent || '').trim().split(/\s+/);
+            return latLngOf(p[1], p[0]);
+          })
+        });
+      } else if (n === 'MultiGeometry' || n === 'MultiTrack') {
+        kmlGeometries(g, out);
+      } else if (n === 'Model') {
+        out.push({ unsupported: n });
+      }
+    });
+    return out;
+  }
+
+  /* ExtendedData（Data / SchemaData）→ 表示項目 */
+  function kmlProperties(pm) {
+    var props = {};
+    childElements(pm, 'ExtendedData').forEach(function (ext) {
+      descendants(ext, 'Data').forEach(function (d) {
+        var k = xmlAttr(d, 'name');
+        if (k) props[k] = global.Util.parseScalar(childText(d, 'value'));
+      });
+      descendants(ext, 'SimpleData').forEach(function (d) {
+        var k = xmlAttr(d, 'name');
+        if (k) props[k] = global.Util.parseScalar(String(d.textContent || '').trim());
+      });
+    });
+    return props;
+  }
+
+  /* KMLの色 aabbggrr → '#rrggbb'（不正ならnull） */
+  function kmlColorToHex(c) {
+    var m = /^\s*#?([0-9a-f]{8})\s*$/i.exec(String(c || ''));
+    if (!m) return null;
+    var h = m[1].toLowerCase();
+    return '#' + h.slice(6, 8) + h.slice(4, 6) + h.slice(2, 4);
+  }
+
+  /* Style 要素の代表色（アイコン → 線 → 塗り の順） */
+  function styleColor(style) {
+    var kinds = ['IconStyle', 'LineStyle', 'PolyStyle'];
+    for (var i = 0; i < kinds.length; i++) {
+      var el = childElements(style, kinds[i])[0];
+      var raw = el ? childText(el, 'color') : '';
+      var c = kmlColorToHex(raw);
+      if (c && !/^\s*#?00/.test(raw)) return c; // 透明（非表示）の指定は代表色にしない
+    }
+    return null;
+  }
+
+  /* 文書内の共有スタイル → { '#id': '#rrggbb' }。StyleMap は normal のスタイルを指す（Google マイマップ等） */
+  function kmlStyleColors(doc) {
+    var colors = dict();
+    descendants(doc.documentElement, 'Style').forEach(function (st) {
+      var id = xmlAttr(st, 'id');
+      var c = id && styleColor(st);
+      if (c) colors['#' + id] = c;
+    });
+    descendants(doc.documentElement, 'StyleMap').forEach(function (sm) {
+      var id = xmlAttr(sm, 'id');
+      if (!id) return;
+      childElements(sm, 'Pair').forEach(function (pair) {
+        if (childText(pair, 'key') !== 'normal') return;
+        var c = colors[childText(pair, 'styleUrl')];
+        if (c) colors['#' + id] = c;
+      });
+    });
+    return colors;
+  }
+
+  /* Placemark の色（直下の Style → styleUrl の共有スタイル） */
+  function placemarkColor(pm, colors) {
+    var inline = childElements(pm, 'Style')[0];
+    var c = inline && styleColor(inline);
+    if (c) return c;
+    var url = childText(pm, 'styleUrl'); // 同一文書内の参照（#id）だけを見る（他ファイルの style は読めない）
+    return url.charAt(0) === '#' ? colors[url] || null : null;
+  }
+
+  /* 最も近い親 Folder の名称 */
+  function kmlFolderName(el) {
+    for (var p = el.parentNode; p && p.nodeType === 1; p = p.parentNode) {
+      if (localName(p) === 'Folder') return childText(p, 'name');
+    }
+    return '';
+  }
+
+  var HTML_ENTITIES = { nbsp: ' ', lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' };
+
+  /* KMLの description（HTMLのことが多い）→ メモ用のプレーンテキスト。
+   * HTMLでは生の改行は空白と同じなので、改行は <br> や段落・表の行の終わりから作る（本アプリの書出もこの形）。 */
+  function descriptionToText(s) {
+    var text = String(s || '');
+    // 実体参照だけで判断するのは改行を含まない場合に限る（改行入りのプレーンテキストの改行を消さない）
+    var isHtml = /<[a-z!/][^>]*>/i.test(text) || (!/\n/.test(text) && /&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(text));
+    if (!isHtml) return text.trim();
+    return text
+      .replace(/>\s*\n\s*/g, '>').replace(/\s*\n\s*</g, '<') // タグの間の整形用の改行・字下げは捨てる
+      .replace(/[ \t]*\r?\n[ \t]*/g, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<\/(td|th)>/gi, '\t')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, function (m, e) {
+        if (e.charAt(0) === '#') {
+          var code = e.charAt(1).toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+        }
+        var k = e.toLowerCase();
+        return Object.prototype.hasOwnProperty.call(HTML_ENTITIES, k) ? HTML_ENTITIES[k] : m;
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/^\s+|\s+$/g, '');
+  }
+
+  /* KMLテキスト → 内部構造。Placemark の点・線・面（穴あり）を取り込む。
+   * タグは ExtendedData の tag（本アプリの書出）→ 親 Folder の名称 → 未分類 の順に決める。 */
+  function parseKML(text) {
+    var src = String(text == null ? '' : text);
+    // gx: 拡張（gx:Track など）を名前空間の宣言なしで使う書き出しがあり、そのままでは構文エラーになるので補う
+    if (/<\/?gx:/.test(src) && !/xmlns:gx\s*=/.test(src)) {
+      src = src.replace(/<((\w+:)?kml)\b/, '<$1 xmlns:gx="http://www.google.com/kml/ext/2.2"');
+    }
+    var doc = parseXml(src);
+    var placemarks = descendants(doc.documentElement, 'Placemark');
+    if (!placemarks.length) throw new Error(tr('kmlEmptyError'));
+    var warnings = [];
+    var drafts = [];
+    var tagNames = dict();
+    var usedNames = dict();
+    var tagColors = dict();
+    var styleColors = kmlStyleColors(doc);
+    placemarks.forEach(function (pm, idx) {
+      var label = 'Placemark[' + idx + ']';
+      var name = childText(pm, 'name');
+      var geoms = kmlGeometries(pm, []);
+      if (!geoms.length) {
+        warnings.push(tr('warningKmlNoGeometry', { label: label, name: name }));
+        return;
+      }
+      var props = kmlProperties(pm);
+      var tag = props.tag != null && props.tag !== '' ? String(props.tag) : '';
+      delete props.tag;
+      var folder = kmlFolderName(pm);
+      if (!tag) tag = folder || UNCATEGORIZED_ID;
+      // 1つのFolder名を別々のタグの表示名に使い回さない（編集で別Folderへ移したPlacemarkなど）
+      if (folder && tag !== UNCATEGORIZED_ID && !tagNames[tag] && !usedNames[folder]) {
+        tagNames[tag] = folder;
+        usedNames[folder] = true;
+      }
+      if (tag !== UNCATEGORIZED_ID && !tagColors[tag]) tagColors[tag] = placemarkColor(pm, styleColors);
+      var note = descriptionToText(childText(pm, 'description'));
+      var pid = xmlAttr(pm, 'id');
+      geoms.forEach(function (g, gi) {
+        if (g.unsupported) {
+          warnings.push(tr('warningUnsupportedGeometry', { label: label, geomType: g.unsupported }));
+          return;
+        }
+        var f = { id: gi === 0 && pid ? pid : undefined, type: g.type, tag: tag, name: name, coordinates: g.coordinates, properties: Object.assign({}, props) };
+        if (note) f.note = note;
+        drafts.push({ label: label, f: f });
+      });
+    });
+    var title = childText(childElements(doc.documentElement, 'Document')[0] || doc.documentElement, 'name');
+    return finishXmlImport(drafts, warnings, tagNames, title, tagColors);
+  }
+
+  /* GPXテキスト → 内部構造。wpt は点、rte と trk の各 trkseg は線として取り込む。 */
+  function parseGPX(text) {
+    var doc = parseXml(text);
+    var root = doc.documentElement;
+    if (localName(root) !== 'gpx') throw new Error(tr('gpxEmptyError'));
+    var drafts = [];
+    var toPoint = function (el) { return latLngOf(xmlAttr(el, 'lat'), xmlAttr(el, 'lon')); };
+
+    childElements(root, 'wpt').forEach(function (w, i) {
+      var props = {};
+      var ele = global.Util.toNumber(childText(w, 'ele'));
+      if (!isNaN(ele)) props[tr('elevationPropKey')] = ele;
+      ['time', 'type', 'sym'].forEach(function (k) {
+        var v = childText(w, k);
+        if (v) props[k] = v;
+      });
+      var f = { type: 'point', tag: 'waypoint', name: childText(w, 'name'), coordinates: toPoint(w), properties: props };
+      var note = childText(w, 'desc') || childText(w, 'cmt');
+      if (note) f.note = note;
+      drafts.push({ label: 'wpt[' + i + ']', f: f });
+    });
+    var withNote = function (f, el) {
+      var note = childText(el, 'desc') || childText(el, 'cmt');
+      if (note) f.note = note;
+      return f;
+    };
+    childElements(root, 'rte').forEach(function (r, i) {
+      drafts.push({
+        label: 'rte[' + i + ']',
+        f: withNote({ type: 'line', tag: 'route', name: childText(r, 'name'), coordinates: childElements(r, 'rtept').map(toPoint), properties: {} }, r)
+      });
+    });
+    childElements(root, 'trk').forEach(function (t, i) {
+      var name = childText(t, 'name');
+      var segs = childElements(t, 'trkseg');
+      segs.forEach(function (s, si) {
+        drafts.push({
+          label: 'trk[' + i + ']' + (segs.length > 1 ? '.trkseg[' + si + ']' : ''),
+          f: withNote({
+            type: 'line', tag: 'track',
+            name: segs.length > 1 && name ? name + ' (' + (si + 1) + ')' : name,
+            coordinates: childElements(s, 'trkpt').map(toPoint),
+            properties: {}
+          }, t)
+        });
+      });
+    });
+    if (!drafts.length) throw new Error(tr('gpxEmptyError'));
+    var tagNames = dict();
+    tagNames.waypoint = tr('gpxWaypoints');
+    tagNames.route = tr('gpxRoutes');
+    tagNames.track = tr('gpxTracks');
+    var metadata = childElements(root, 'metadata')[0];
+    // GPX 1.1 は metadata/name、GPX 1.0 はルート直下の name に表題を持つ
+    return finishXmlImport(drafts, [], tagNames, (metadata && childText(metadata, 'name')) || childText(root, 'name'));
+  }
+
+  /* KML/GPX 共通の仕上げ：ID採番・重複解消・検証・タグ生成 */
+  function finishXmlImport(drafts, warnings, tagNames, title, tagColors) {
+    var ids = createIdAllocator(drafts.map(function (d) { return d.f.id; }));
+    var features = [];
+    drafts.forEach(function (d) {
+      var f = d.f;
+      var dup = ids.ensure(f);
+      if (dup != null) warnings.push(tr('warningItemDuplicateId', { label: d.label, id: dup, newId: f.id }));
+      var v = validateFeature(f);
+      if (!v.ok) {
+        warnings.push(tr('warningItemInvalid', { label: d.label, id: f.id, errors: v.errors.join(' / ') }));
+        return;
+      }
+      ids.commit(f.id);
+      features.push(f);
+    });
+    return {
+      meta: title ? { title: title } : {},
+      view: null,
+      tags: tagsFromFeatures(features, tagNames).map(function (t) {
+        var c = tagColors && tagColors[t.id];
+        return c ? Object.assign({}, t, { color: c }) : t;
+      }),
+      features: features,
+      warnings: warnings
+    };
+  }
+
+  /* features に現れたタグIDからタグ定義を自動生成。names（タグID→表示名）があれば名称に使う。 */
+  function tagsFromFeatures(features, names) {
     var tags = [];
     var seen = dict();
     features.forEach(function (f) {
       if (seen[f.tag]) return;
       seen[f.tag] = true;
       if (f.tag === UNCATEGORIZED_ID) tags.push(uncategorizedTag());
-      else tags.push({ id: f.tag, name: f.tag, color: TAG_PALETTE[tags.length % TAG_PALETTE.length] });
+      else tags.push({ id: f.tag, name: (names && names[f.tag]) || f.tag, color: TAG_PALETTE[tags.length % TAG_PALETTE.length] });
     });
     return tags;
   }
@@ -517,16 +878,20 @@
     return { tags: tags, features: features, warnings: warnings };
   }
 
-  /* ファイル名（拡張子）と内容から形式を判定する: 'yaml' | 'geojson' | 'csv' */
+  /* ファイル名（拡張子）と内容から形式を判定する: 'yaml' | 'geojson' | 'csv' | 'kml' | 'gpx' */
   function detectFormat(filename, text) {
     var m = /\.([a-z0-9]+)$/i.exec(String(filename || ''));
     var ext = m ? m[1].toLowerCase() : '';
     if (ext === 'csv' || ext === 'tsv') return 'csv';
     if (ext === 'geojson' || ext === 'json') return 'geojson';
     if (ext === 'yaml' || ext === 'yml') return 'yaml';
+    if (ext === 'kml') return 'kml';
+    if (ext === 'gpx') return 'gpx';
+    if (ext === 'kmz') return 'kmz';
     // 拡張子で分からないもの（Excelの「Unicodeテキスト」= .txt など）は内容で判定する
-    var src = String(text || '');
+    var src = String(text || '').replace(/^﻿/, '');
     if (/^\s*[{[]/.test(src)) return 'geojson';
+    if (/^\s*</.test(src)) return /<(\w+:)?gpx[\s>/]/.test(src) ? 'gpx' : 'kml';
     return looksLikeCsvHeader(src) ? 'csv' : 'yaml';
   }
 
@@ -544,6 +909,9 @@
   function parseText(format, text) {
     if (format === 'geojson') return parseGeoJSON(text);
     if (format === 'csv') return parseCSV(text);
+    if (format === 'kml') return parseKML(text);
+    if (format === 'gpx') return parseGPX(text);
+    if (format === 'kmz') throw new Error(tr('kmzUnsupportedError'));
     return parseYaml(text);
   }
 
@@ -639,6 +1007,8 @@
     parseYaml: parseYaml,
     parseGeoJSON: parseGeoJSON,
     parseCSV: parseCSV,
+    parseKML: parseKML,
+    parseGPX: parseGPX,
     parseText: parseText,
     detectFormat: detectFormat,
     mergeData: mergeData,

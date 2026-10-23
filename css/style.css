@@ -108,6 +108,9 @@ body { display: flex; flex-direction: column; min-height: 100vh; height: 100vh; 
   white-space: nowrap;
 }
 .mpv-editbar[hidden] { display: none; }
+/* 計測中は結果の文言が頂点ごとに変わるので、幅を固定し文言を1行目に置いてボタンが動かないようにする */
+.mpv-editbar.is-measuring { flex-wrap: wrap; justify-content: center; white-space: normal; width: min(440px, calc(100% - 20px)); }
+.mpv-editbar.is-measuring > span { flex: 1 1 100%; text-align: center; }
 
 /* パネル */
 .mpv-panel { background: var(--mpv-panel); border: 1px solid var(--mpv-border); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
@@ -148,9 +151,14 @@ button:disabled:hover { background: var(--mpv-input); }
 .mpv-tag__main { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; font-size: 13px; }
 .mpv-tag__swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .mpv-tag__btns button { padding: 1px 5px; font-size: 12px; }
+.mpv-tag__count { margin-left: auto; font-size: 11px; color: var(--mpv-muted); font-variant-numeric: tabular-nums; }
+.mpv-count { font-weight: normal; font-size: 12px; }
 
 /* 一覧（プロット/抽出結果） */
 .mpv-search { width: 100%; padding: 5px 8px; margin-bottom: 6px; border: 1px solid var(--mpv-border); border-radius: 6px; font: inherit; font-size: 13px; background: var(--mpv-input); color: var(--mpv-text); }
+.mpv-listfilter { display: flex; gap: 6px; margin-bottom: 6px; }
+.mpv-listfilter .mpv-search { flex: 1; min-width: 0; margin-bottom: 0; }
+.mpv-listfilter select { width: auto; flex: 0 0 auto; padding: 4px 6px; font-size: 13px; }
 .mpv-list { display: flex; flex-direction: column; gap: 3px; max-height: 240px; overflow-y: auto; }
 .mpv-row { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "g n" "g m"; gap: 0 8px; align-items: center; padding: 5px 6px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
 .mpv-row:hover { background: var(--mpv-subtle); }
@@ -172,6 +180,13 @@ button:disabled:hover { background: var(--mpv-input); }
 .mpv-marker__glyph { transform: rotate(45deg); font-size: 13px; line-height: 1; }
 .mpv-marker-wrap.mpv-editing .mpv-marker { outline: 3px dashed #ff9800; outline-offset: 3px; cursor: move; }
 .mpv-popup__action { display: block; margin-top: 6px; }
+
+/* 計測：プロットのクリックやポップアップを止め、クリックを地図（頂点の追加）へ通す */
+.mpv-measuring { cursor: crosshair; }
+.mpv-measuring .leaflet-interactive { pointer-events: none !important; }
+/* マウス位置の緯度経度（タッチ端末では空のまま隠れる） */
+.mpv-cursorpos { background: rgba(255,255,255,.85); color: #222; padding: 1px 6px; font-size: 11px; border-radius: 3px; font-variant-numeric: tabular-nums; }
+.mpv-cursorpos:empty { display: none; }
 .mpv-flash { animation: mpvflash .6s ease 2; }
 @keyframes mpvflash { 0%,100% { filter: none; } 50% { filter: drop-shadow(0 0 6px #ff9800) brightness(1.4); } }
 
@@ -250,6 +265,29 @@ body.is-dropping .mpv-drophint { display: flex; }
 .mpv-manual__body ol { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.55; }
 .mpv-manual__body li + li { margin-top: 4px; }
 
+/* 印刷：A4横の紙面に地図だけを出す。印刷前に画面にも同じ大きさ（mm指定は画面と紙で同じCSSピクセル）を
+   適用して、Leafletが地図の大きさを取り違えないようにする（app.js の enterPrintLayout） */
+@page { size: A4 landscape; margin: 10mm; }
+.mpv-print-title { display: none; }
+body.is-printing .mpv-header,
+body.is-printing .mpv-sidebar,
+body.is-printing .mpv-detail,
+body.is-printing .mpv-map-btn,
+body.is-printing .mpv-map-restore,
+body.is-printing .mpv-editbar,
+body.is-printing .leaflet-control-zoom,
+body.is-printing .mpv-cursorpos { display: none !important; }
+body.is-printing .mpv-layout { display: block; flex: 0 0 auto; }
+body.is-printing .mpv-mapwrap { display: flex; flex-direction: column; width: 277mm; height: 188mm; overflow: hidden; }
+body.is-printing .mpv-print-title { display: block; order: -1; flex: 0 0 auto; padding: 0 2px 6px; font-size: 14px; font-weight: 600; color: #000; background: #fff; }
+body.is-printing #map { position: relative; inset: auto; flex: 1 1 auto; }
+@media print {
+  html, body { height: auto; min-height: 0; overflow: visible; background: #fff; }
+  .mpv-drophint, .mpv-modal, .mpv-lightbox { display: none !important; }
+  .leaflet-control-attribution { font-size: 8px; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+
 /* レスポンシブ：サイドバーと詳細を地図の上に重ねる。
    ヘッダの高さは折り返しで変わるため、レイアウト領域（ヘッダの下）を基準に配置する。 */
 @media (max-width: 1100px) {
@@ -277,5 +315,6 @@ body.is-dropping .mpv-drophint { display: flex; }
   .mpv-header button { flex: 1 1 auto; min-width: 84px; }
   .mpv-drawtools, .mpv-selecttools { flex-wrap: wrap; }
   .mpv-detail.is-open { width: 100vw; }
-  .mpv-editbar { flex-wrap: wrap; justify-content: center; white-space: normal; max-width: calc(100% - 20px); }
+  .mpv-editbar { flex-wrap: wrap; justify-content: center; white-space: normal; width: max-content; max-width: calc(100% - 20px); }
+  .mpv-editbar > span { flex: 1 1 100%; text-align: center; }
 }

@@ -76,3 +76,13 @@ test('Util.decodeText: UTF-8(BOM付き含む)とShift_JISを判別して復号�
   assert.equal(Util.decodeText(utf16be.buffer), '緯度');
   assert.equal(Util.decodeText(new ArrayBuffer(0)), '');
 });
+
+test('Util.formatDistance / formatArea: 単位の切替と丸め', () => {
+  const { Util } = createSandbox({});
+  assert.equal(Util.formatDistance(3.14159), '3.1 m');
+  assert.equal(Util.formatDistance(523.6), '524 m');
+  assert.equal(Util.formatDistance(1234.5), '1.234 km');
+  assert.equal(Util.formatDistance(NaN), '');
+  assert.equal(Util.formatArea(999999.4), '999999 m²');
+  assert.equal(Util.formatArea(2500000), '2.500 km²');
+});

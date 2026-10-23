@@ -201,15 +201,13 @@
       var verts = feature.coordinates.reduce(function (a, r) { return a + r.length; }, 0);
       var s2 = esc(tr('ringVertexCount', { rings: feature.coordinates.length, verts: verts }));
       if (typeof m.area === 'number') s2 += '<br>' + esc(tr('approxArea', { value: formatArea(m.area) }));
+      if (typeof m.perimeter === 'number') s2 += ' / ' + esc(tr('approxPerimeter', { value: global.Util.formatDistance(m.perimeter) }));
       return s2;
     }
     return '';
   }
 
-  function formatArea(a) {
-    if (a >= 1e6) return (a / 1e6).toFixed(3) + ' km²';
-    return Math.round(a) + ' m²';
-  }
+  function formatArea(a) { return global.Util.formatArea(a); }
 
   function resolveSrc(src, meta) {
     if (!src) return '';

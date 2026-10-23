@@ -72,7 +72,41 @@ test('selectInBounds: 既知の制限 — 両端点がbbox外で横切る線は�
   assert.deepEqual(ids, [], 'この挙動を変える場合はこのテストを更新する');
 });
 
-test('measure: turf不在では空オブジェクトを返す', () => {
+const near = (actual, expected, relTol, msg) =>
+  assert.ok(Math.abs(actual - expected) <= Math.abs(expected) * relTol, `${msg}: ${actual} ≈ ${expected}`);
+
+test('distance / pathLength: 大円距離（turf.length と同じ平均半径）', () => {
   const { Select } = newSelect();
-  assert.deepEqual(Select.measure({ id: 'l', type: 'line', coordinates: [[35, 139], [36, 140]] }), {});
+  const oneDegree = 2 * Math.PI * 6371008.8 / 360; // 子午線方向の緯度1度
+  near(Select.distance([35, 139], [36, 139]), oneDegree, 1e-9, '緯度1度');
+  near(Select.pathLength([[0, 0], [1, 0], [2, 0]]), 2 * oneDegree, 1e-9, '折れ線の合計');
+  assert.equal(Select.pathLength([[35, 139]]), 0, '1点は0');
+  // 閉じる指定では終点→始点の辺も足す（面の周長）
+  near(Select.pathLength([[0, 0], [1, 0], [1, 1]], true),
+    Select.pathLength([[0, 0], [1, 0], [1, 1], [0, 0]]), 1e-12, '周長');
+});
+
+test('ringArea / polygonArea: 球面上の面積（向き・閉じ方によらない、穴は差し引く）', () => {
+  const { Select } = newSelect();
+  const R = 6371008.8, rad = Math.PI / 180; // turf 7 の area と同じ平均半径
+  // 経線と緯線で囲まれた矩形の厳密な面積 R²·Δλ·(sinφ2 − sinφ1)
+  const exact = R * R * (1 * rad) * (Math.sin(36 * rad) - Math.sin(35 * rad));
+  const ring = [[35, 139], [35, 140], [36, 140], [36, 139]];
+  near(Select.ringArea(ring), exact, 1e-9, '開いたリング');
+  near(Select.ringArea(ring.slice().reverse()), exact, 1e-9, '逆回り');
+  near(Select.ringArea(ring.concat([ring[0]])), exact, 1e-9, '閉じたリング');
+  assert.equal(Select.ringArea([[35, 139], [36, 140]]), 0, '2点は0');
+  const hole = [[35.25, 139.25], [35.25, 139.75], [35.75, 139.75], [35.75, 139.25]];
+  near(Select.polygonArea([ring, hole]), exact - Select.ringArea(hole), 1e-9, '穴あり');
+});
+
+test('measure: 線は長さ(km)、面は面積(m²)と周長(m)', () => {
+  const { Select } = newSelect();
+  const line = Select.measure({ id: 'l', type: 'line', coordinates: [[35, 139], [36, 139]] });
+  near(line.length, 2 * Math.PI * 6371.0088 / 360, 1e-9, '長さkm');
+  const ring = [[35, 139], [35, 140], [36, 140]];
+  const poly = Select.measure({ id: 'g', type: 'polygon', coordinates: [ring] });
+  near(poly.area, Select.ringArea(ring), 1e-12, '面積');
+  near(poly.perimeter, Select.pathLength(ring, true), 1e-12, '周長');
+  assert.deepEqual(Select.measure({ id: 'p', type: 'point', coordinates: [35, 139] }), {});
 });

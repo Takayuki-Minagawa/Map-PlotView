@@ -22,10 +22,13 @@
   var respectHidden = true;
   var mapOnlyMode = false;
   var searchQuery = '';
+  var typeFilter = '';           // 一覧の種別フィルタ（'' = すべて）
   var drawCreateHandler = null;  // 現在の作図セッションの pm:create ハンドラ
   var drawShape = null;          // 作図中のGeoman図形名（'Marker' | 'Line' | 'Polygon'）
   var rectCleanup = null;        // 現在の矩形選択セッションの解除関数
   var geomEditId = null;         // 形状編集中のfeatureId
+  var measureSession = null;     // 距離・面積の計測セッション（mapview.startMeasure の戻り値）
+  var measurePoints = [];        // 計測中の頂点 [[緯度,経度], ...]
   var placeSearchSeq = 0;        // 場所検索の世代番号（古い応答を捨てる）
   var autoMapOnly = false;       // 狭い画面でセッション開始時に自動で「地図のみ」へ切り替えたか
   var autosaveFailed = false;    // 直近の自動保存に失敗したか（ステータスに出し続ける）
@@ -48,7 +51,8 @@
 
     mapview = new global.MapView();
     mapview.initMap(document.getElementById('map'), Store.DEFAULT_VIEW, {
-      onFeatureClick: selectFeature
+      onFeatureClick: selectFeature,
+      onMapContextMenu: openPointMenu
     });
 
     detail = new global.Detail(document.getElementById('detail'), {
@@ -64,6 +68,7 @@
     ui = new global.UI({
       tagList: document.getElementById('tagList'),
       featureList: document.getElementById('featureList'),
+      featureCount: document.getElementById('featureCount'),
       selectionList: document.getElementById('selectionList'),
       selectionCount: document.getElementById('selectionCount'),
       searchResults: document.getElementById('placeResults'),
@@ -186,6 +191,10 @@
     return JSON.stringify(global.UI.toGeoJSONCollection(features || featuresArray()), null, 2);
   }
 
+  function exportKML(features) {
+    return global.UI.toKML(features || featuresArray(), tagsArray(), state.meta);
+  }
+
   function download(filename, text, mime) {
     var blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
     var a = document.createElement('a');
@@ -212,19 +221,29 @@
     return state.selection.ids.map(function (id) { return state.features.get(id); }).filter(Boolean);
   }
 
-  /* 検索クエリに一致するフィーチャ（名称/ID/タグ名/タグID、部分一致・大小無視） */
+  /* 種別フィルタと検索クエリに一致するフィーチャ。
+   * 検索は名称/ID/タグ名/タグID/メモ/表示項目の名前と値を対象に、部分一致・大小無視で行う。 */
   function filteredFeatures() {
     var q = searchQuery.trim().toLowerCase();
-    if (!q) return featuresArray();
     var byId = tagsById();
     return featuresArray().filter(function (f) {
+      if (typeFilter && f.type !== typeFilter) return false;
+      if (!q) return true;
       var tag = byId[f.tag];
+      var props = f.properties || {};
+      var keys = Object.keys(props);
+      var hay = [f.name, f.id, f.tag, tag && tag.name, f.note]
+        .concat(keys, keys.map(function (k) { return global.Util.formatVal(props[k]); }));
       // YAML由来の数値ID等に備えStringで正規化
-      return String(f.name || '').toLowerCase().indexOf(q) !== -1 ||
-        String(f.id || '').toLowerCase().indexOf(q) !== -1 ||
-        String(f.tag || '').toLowerCase().indexOf(q) !== -1 ||
-        (tag && String(tag.name || '').toLowerCase().indexOf(q) !== -1);
+      return hay.some(function (s) { return s != null && String(s).toLowerCase().indexOf(q) !== -1; });
     });
+  }
+
+  /* タグID → 所属フィーチャ数 */
+  function tagCounts() {
+    var counts = Object.create(null);
+    state.features.forEach(function (f) { counts[f.tag] = (counts[f.tag] || 0) + 1; });
+    return counts;
   }
 
   /* ---- 元に戻す / やり直し ---- */
@@ -294,13 +313,21 @@
     mapview.setFeatureVisible(f.id, !isHidden(f));
   }
 
+  function renderFeatureList() {
+    ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId, state.features.size);
+  }
+
   function renderLists() {
-    ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
+    renderFeatureList();
     ui.renderSelectionList(selectionFeatures(), tagsById(), state.activeFeatureId);
   }
 
+  function renderTagList() {
+    ui.renderTagList(tagsArray(), state.hiddenTags, tagCounts());
+  }
+
   function renderAll() {
-    ui.renderTagList(tagsArray(), state.hiddenTags);
+    renderTagList();
     renderLists();
   }
 
@@ -342,7 +369,7 @@
     featuresArray().forEach(function (f) {
       if (f.tag === tagId) mapview.setFeatureVisible(f.id, visible);
     });
-    ui.renderTagList(tagsArray(), state.hiddenTags);
+    renderTagList();
     autosave();
   }
 
@@ -415,15 +442,16 @@
     setStatus(tr('propertySaved', { key: key }));
   }
 
-  /* ---- セッション（作図 / 矩形選択 / 形状編集）は同時に1つだけ ---- */
+  /* ---- セッション（作図 / 矩形選択 / 形状編集 / 計測）は同時に1つだけ ---- */
   function cancelSessions() {
     cancelDraw();
     cancelRectSelect();
     cancelGeometryEdit();
+    cancelMeasure();
   }
 
   function sessionActive() {
-    return !!drawCreateHandler || !!rectCleanup || geomEditId != null;
+    return !!drawCreateHandler || !!rectCleanup || geomEditId != null || !!measureSession;
   }
 
   /* 狭い画面ではサイドバーと詳細が地図に重なるため、地図上で操作するセッションの間だけ「地図のみ」にする */
@@ -440,15 +468,24 @@
   }
 
   /* 地図下部の操作バーと履歴ボタンを、進行中のセッションに合わせる。セッションの開始・終了のたびに呼ぶ。
-   * 「確定」は形状編集のときだけ出す（作図はGeomanの操作で、矩形選択はドラッグ完了で確定する）。 */
+   * 「確定」は形状編集のときだけ出す（作図はGeomanの操作で、矩形選択はドラッグ完了で確定する）。
+   * 計測中は結果を表示し、「1点戻す」「プロットに追加」を出す。 */
   function syncSessionBar() {
-    var kind = geomEditId != null ? 'reshapeEditing' : drawCreateHandler ? 'drawingNow' : rectCleanup ? 'selectingNow' : null;
+    var kind = geomEditId != null ? 'reshapeEditing' : drawCreateHandler ? 'drawingNow' : rectCleanup ? 'selectingNow' :
+      measureSession ? 'measuringNow' : null;
     var bar = document.getElementById('editBar');
     var label = document.getElementById('editBarLabel');
     var done = document.getElementById('btnReshapeDone');
-    if (bar) bar.hidden = !kind;
-    if (label) label.textContent = kind ? tr(kind) : '';
+    var mUndo = document.getElementById('btnMeasureUndo');
+    var mAdd = document.getElementById('btnMeasureAdd');
+    if (bar) {
+      bar.hidden = !kind;
+      bar.classList.toggle('is-measuring', kind === 'measuringNow');
+    }
+    if (label) label.textContent = kind === 'measuringNow' ? measureText() : kind ? tr(kind) : '';
     if (done) done.hidden = kind !== 'reshapeEditing';
+    if (mUndo) { mUndo.hidden = kind !== 'measuringNow'; mUndo.disabled = !measurePoints.length; }
+    if (mAdd) { mAdd.hidden = kind !== 'measuringNow'; mAdd.disabled = !measureCanBePlot(); }
     updateHistoryButtons();
   }
 
@@ -612,6 +649,137 @@
     });
   }
 
+  /* ---- 距離・面積の計測 ---- */
+  function beginMeasure(mode) {
+    cancelSessions();
+    enterSessionView();
+    measurePoints = [];
+    measureSession = mapview.startMeasure(mode === 'area' ? 'area' : 'line', function (points) {
+      measurePoints = points;
+      syncSessionBar();
+    });
+    syncSessionBar();
+    setStatus(tr('measureHint'));
+  }
+
+  function cancelMeasure() {
+    if (!measureSession) return;
+    var s = measureSession;
+    measureSession = null;
+    measurePoints = [];
+    s.stop();
+    leaveSessionView();
+    syncSessionBar();
+    setStatus('');
+  }
+
+  /* 計測結果の表示文言（頂点が足りなければ操作の案内） */
+  function measureText() {
+    var area = measureSession && measureSession.mode === 'area';
+    var Select = global.Select;
+    var fmtD = global.Util.formatDistance;
+    if (!area) {
+      if (measurePoints.length < 2) return tr('measureLineStart');
+      return tr('measureDistance', { value: fmtD(Select.pathLength(measurePoints)) });
+    }
+    if (measurePoints.length < 3) return tr('measureAreaStart');
+    return tr('measureArea', {
+      area: global.Util.formatArea(Select.ringArea(measurePoints)),
+      perimeter: fmtD(Select.pathLength(measurePoints, true))
+    });
+  }
+
+  function measureCanBePlot() {
+    if (!measureSession) return false;
+    return measurePoints.length >= (measureSession.mode === 'area' ? 3 : 2);
+  }
+
+  /* 計測した線/面を、そのままプロットとして追加する */
+  function measureToPlot() {
+    if (!measureCanBePlot()) return;
+    var type = measureSession.mode === 'area' ? 'polygon' : 'line';
+    var coords = measureSession.coords();
+    // 追加できない形状（±180°をまたぐ線など）なら、計測は残したまま知らせる
+    var v = Store.validateFeature({ id: 'measure', type: type, coordinates: coords });
+    if (!v.ok) {
+      alert(tr('drawInvalid', { errors: v.errors.join(' / ') }));
+      return;
+    }
+    cancelMeasure();
+    openNewFeature(type, coords, '');
+  }
+
+  function undoMeasurePoint() {
+    if (measureSession) measureSession.undo();
+  }
+
+  /* ---- 右クリック（長押し）メニュー ---- */
+  function openPointMenu(latlng, anchor) {
+    if (sessionActive()) return;
+    var lat = round(latlng.lat), lng = round(latlng.lng);
+    mapview.openPointPopup([lat, lng], tr('pointMenuTitle'), [
+      {
+        label: tr('addPointHere'),
+        onClick: function () {
+          mapview.map.closePopup();
+          cancelSessions();
+          openNewFeature('point', [lat, lng], '');
+        }
+      },
+      {
+        label: tr('copyCoords'),
+        onClick: function () {
+          mapview.map.closePopup();
+          copyText(lat + ', ' + lng);
+        }
+      }
+    ], anchor);
+  }
+
+  /* クリップボードへコピーし、結果をステータスに出す（使えない環境では値を示して手で写せるようにする） */
+  function copyText(text) {
+    var clip = global.navigator && global.navigator.clipboard;
+    if (!clip || !clip.writeText) { setStatus(tr('copyFailed', { text: text })); return; }
+    clip.writeText(text).then(
+      function () { setStatus(tr('copied', { text: text })); },
+      function () { setStatus(tr('copyFailed', { text: text })); });
+  }
+
+  /* ---- 印刷 ---- */
+  /* 印刷用の配置（地図だけ＋タイトル）を画面にも適用して地図の大きさを合わせてから印刷する。
+   * beforeprint の時点では印刷用CSSがまだ効いておらず、Leafletが地図の大きさを取り違えるため。
+   * 進行中の計測・形状編集は取り消さない（計測した線もそのまま印刷できる。操作バーは印刷に出さない）。
+   * 作図と矩形選択はカーソル位置の案内が紙面に残るので終える。 */
+  function printMap() {
+    if (!global.print) return;
+    cancelDraw();
+    cancelRectSelect();
+    enterPrintLayout();
+    setTimeout(function () { global.print(); }, 400); // タイルの読み直しを待つ
+  }
+
+  function isPrinting() {
+    return !!(document.body.classList.contains && document.body.classList.contains('is-printing'));
+  }
+
+  function enterPrintLayout() {
+    if (isPrinting()) return;
+    var title = document.getElementById('printTitle');
+    if (title) {
+      var lang = global.I18n ? global.I18n.getLanguage() : 'ja';
+      var name = state.meta && state.meta.title ? String(state.meta.title) : 'Map PlotView';
+      title.textContent = name + ' — ' + new Date().toLocaleDateString(lang === 'en' ? 'en-US' : 'ja-JP');
+    }
+    document.body.classList.add('is-printing');
+    refreshMapSize();
+  }
+
+  function endPrint() {
+    if (!isPrinting()) return;
+    document.body.classList.remove('is-printing');
+    refreshMapSize();
+  }
+
   /* ---- 矩形範囲抽出（R9） ---- */
   function beginRectSelect() {
     // 進行中のセッションを解除（リスナ積み増し・残留矩形を防止）
@@ -695,6 +863,11 @@
     });
     on('btnSaveYaml', 'click', function () { download('map-data.yaml', exportYaml(), 'text/yaml;charset=utf-8'); });
     on('btnSaveGeo', 'click', function () { download('map-data.geojson', exportGeoJSON(), 'application/geo+json'); });
+    on('btnSaveKml', 'click', function () { download('map-data.kml', exportKML(), 'application/vnd.google-earth.kml+xml'); });
+    on('btnPrint', 'click', printMap);
+    // ブラウザのメニュー（Ctrl+P）から印刷した場合も、できる範囲で地図だけの配置にする
+    global.addEventListener('beforeprint', enterPrintLayout);
+    global.addEventListener('afterprint', endPrint);
     on('btnLoadSample', 'click', loadSample);
     on('btnUndo', 'click', undo);
     on('btnRedo', 'click', redo);
@@ -706,6 +879,10 @@
     on('btnAddPoint', 'click', function () { addFeatureByType('point'); });
     on('btnAddLine', 'click', function () { addFeatureByType('line'); });
     on('btnAddPolygon', 'click', function () { addFeatureByType('polygon'); });
+    on('btnMeasureLine', 'click', function () { beginMeasure('line'); });
+    on('btnMeasureArea', 'click', function () { beginMeasure('area'); });
+    on('btnMeasureUndo', 'click', undoMeasurePoint);
+    on('btnMeasureAdd', 'click', measureToPlot);
 
     on('btnRectSelect', 'click', beginRectSelect);
     on('btnClearSelect', 'click', clearSelection);
@@ -718,6 +895,9 @@
     on('btnExportSelGeo', 'click', function () {
       download('selection.geojson', exportGeoJSON(selectionFeatures()), 'application/geo+json');
     });
+    on('btnExportSelKml', 'click', function () {
+      download('selection.kml', exportKML(selectionFeatures()), 'application/vnd.google-earth.kml+xml');
+    });
     on('btnExportSelCsv', 'click', function () {
       // BOM付与でExcelの文字化けを防ぐ
       download('selection.csv', '\ufeff' + global.UI.toCSV(selectionFeatures()), 'text/csv;charset=utf-8');
@@ -726,7 +906,11 @@
     on('btnFitAll', 'click', function () { mapview.fitAllFeatures(); });
     on('featureSearch', 'input', function (e) {
       searchQuery = e.target.value;
-      ui.renderFeatureList(filteredFeatures(), tagsById(), state.activeFeatureId);
+      renderFeatureList();
+    });
+    on('featureTypeFilter', 'change', function (e) {
+      typeFilter = e.target.value;
+      renderFeatureList();
     });
 
     // 場所検索・現在地
@@ -771,6 +955,7 @@
       if (isTextEntry(e.target)) return; // 入力欄ではブラウザ標準の取り消しを優先
       e.preventDefault();
       if (drawCreateHandler && key === 'z' && !e.shiftKey) removeLastDrawVertex();
+      else if (measureSession && key === 'z' && !e.shiftKey) undoMeasurePoint();
       else if (key === 'y' || e.shiftKey) redo();
       else undo();
       return;
@@ -784,6 +969,7 @@
     if (geomEditId != null) { cancelGeometryEdit(); return; }
     if (drawCreateHandler) { cancelDraw(); setStatus(''); return; }
     if (rectCleanup) { cancelRectSelect(); setStatus(''); return; }
+    if (measureSession) { cancelMeasure(); return; }
     if (mapOnlyMode) { autoMapOnly = false; setMapOnlyMode(false); }
   }
 
@@ -943,7 +1129,8 @@
     exportYaml: exportYaml,
     selectionFeatures: selectionFeatures,
     undo: undo,
-    redo: redo
+    redo: redo,
+    exportKML: exportKML
   };
 
   if (typeof document !== 'undefined') {

@@ -23,10 +23,12 @@
       <button id="btnLoad" data-i18n="loadData">読込</button>
       <button id="btnSaveYaml" data-i18n="saveYaml">保存(YAML)</button>
       <button id="btnSaveGeo" data-i18n="saveGeoJson">保存(GeoJSON)</button>
+      <button id="btnSaveKml" data-i18n="saveKml">保存(KML)</button>
       <button id="btnLoadSample" data-i18n="sample">サンプル</button>
       <button id="btnUndo" data-i18n="undo" data-i18n-title="undoTitle" disabled>元に戻す</button>
       <button id="btnRedo" data-i18n="redo" data-i18n-title="redoTitle" disabled>やり直し</button>
-      <input type="file" id="fileInput" accept=".yaml,.yml,.geojson,.json,.csv,.tsv,text/yaml,application/geo+json,application/json,text/csv" hidden>
+      <button id="btnPrint" data-i18n="print" data-i18n-title="printHint">印刷</button>
+      <input type="file" id="fileInput" accept=".yaml,.yml,.geojson,.json,.csv,.tsv,.kml,.gpx,text/yaml,application/geo+json,application/json,text/csv,application/vnd.google-earth.kml+xml,application/gpx+xml" hidden>
     </div>
     <div class="mpv-settings" aria-label="display settings">
       <button id="btnMapOnlyToggle" data-i18n="mapOnlyOpen" data-i18n-aria="mapOnlyOpen">地図のみ</button>
@@ -85,6 +87,11 @@
           <button id="btnAddLine"><span aria-hidden="true">/</span><span data-i18n="addLine">線</span></button>
           <button id="btnAddPolygon"><span aria-hidden="true">▱</span><span data-i18n="addPolygon">面</span></button>
         </div>
+        <h3 data-i18n="measureTitle">計測</h3>
+        <div class="mpv-drawtools">
+          <button id="btnMeasureLine"><span aria-hidden="true">↔</span><span data-i18n="measureLine">距離</span></button>
+          <button id="btnMeasureArea"><span aria-hidden="true">⬚</span><span data-i18n="measureAreaBtn">面積</span></button>
+        </div>
       </section>
 
       <section class="mpv-panel">
@@ -112,16 +119,25 @@
           <span data-i18n="exportSelection">抽出を書出:</span>
           <button id="btnExportSelYaml" class="mpv-mini">YAML</button>
           <button id="btnExportSelGeo" class="mpv-mini">GeoJSON</button>
+          <button id="btnExportSelKml" class="mpv-mini">KML</button>
           <button id="btnExportSelCsv" class="mpv-mini">CSV</button>
         </div>
       </section>
 
       <section class="mpv-panel">
         <div class="mpv-panel__head">
-          <h2 data-i18n="featureList">プロット一覧</h2>
+          <h2><span data-i18n="featureList">プロット一覧</span> <span id="featureCount" class="mpv-count"></span></h2>
           <button id="btnFitAll" class="mpv-mini" data-i18n="fitAll">全体表示</button>
         </div>
-        <input type="search" id="featureSearch" class="mpv-search" data-i18n-placeholder="searchPlaceholder" placeholder="検索（名称/ID/タグ）">
+        <div class="mpv-listfilter">
+          <input type="search" id="featureSearch" class="mpv-search" data-i18n-placeholder="searchPlaceholder" data-i18n-aria="searchPlaceholder" placeholder="検索（名称/ID/タグ/項目/メモ）">
+          <select id="featureTypeFilter" data-i18n-aria="typeFilter" aria-label="種別">
+            <option value="" data-i18n="typeAll">すべて</option>
+            <option value="point" data-i18n="point">点</option>
+            <option value="line" data-i18n="line">線</option>
+            <option value="polygon" data-i18n="polygon">面</option>
+          </select>
+        </div>
         <div id="featureList" class="mpv-list"></div>
       </section>
 
@@ -131,11 +147,14 @@
     <!-- 中央：地図 -->
     <main class="mpv-mapwrap">
       <div id="map"></div>
+      <div id="printTitle" class="mpv-print-title" aria-hidden="true"></div>
       <button id="btnLocate" class="mpv-map-btn" data-i18n-title="locate" data-i18n-aria="locate" title="現在地を表示" aria-label="現在地を表示">◎</button>
       <!-- 作図・矩形選択・形状編集の最中に出す操作バー（タッチ端末でもEsc無しで取り消せるように） -->
       <div id="editBar" class="mpv-editbar" role="group" hidden>
-        <span id="editBarLabel"></span>
+        <span id="editBarLabel" aria-live="polite"></span>
         <button id="btnReshapeDone" class="mpv-ok" data-i18n="reshapeConfirm">確定</button>
+        <button id="btnMeasureUndo" data-i18n="measureUndo" hidden>1点戻す</button>
+        <button id="btnMeasureAdd" class="mpv-ok" data-i18n="measureAdd" hidden>プロットに追加</button>
         <button id="btnReshapeCancel" data-i18n="cancel">キャンセル</button>
       </div>
       <button id="btnMapOnlyRestore" class="mpv-map-restore" data-i18n="mapOnlyClose" data-i18n-aria="mapOnlyClose" hidden>パネルを表示</button>

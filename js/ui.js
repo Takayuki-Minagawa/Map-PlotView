@@ -11,8 +11,8 @@
     this.h = handlers || {};   // コールバック群
   }
 
-  /* タグ一覧（凡例＋表示ON/OFF＋編集/削除） */
-  UI.prototype.renderTagList = function (tags, hiddenTags) {
+  /* タグ一覧（凡例＋表示ON/OFF＋件数＋編集/削除）。counts: タグID→所属プロット数 */
+  UI.prototype.renderTagList = function (tags, hiddenTags, counts) {
     var self = this;
     var el = this.refs.tagList;
     el.innerHTML = '';
@@ -26,6 +26,7 @@
         '<span class="mpv-tag__swatch" style="background:' + esc(t.color || '#999') + '"></span>' +
         '<span class="mpv-tag__glyph">' + esc(global.Symbols.glyphFor(t.symbol)) + '</span>' +
         '<span class="mpv-tag__name">' + esc(t.name || t.id) + '</span>' +
+        (counts ? '<span class="mpv-tag__count">' + esc(counts[t.id] || 0) + '</span>' : '') +
         '</label>' +
         '<span class="mpv-tag__btns">' +
         '<button data-act="edit" title="' + esc(tr('edit')) + '">✎</button>' +
@@ -43,9 +44,15 @@
     });
   };
 
-  /* 全プロット一覧 */
-  UI.prototype.renderFeatureList = function (features, tagsById, activeId) {
-    this._renderRows(this.refs.featureList, features, tagsById, activeId);
+  /* 全プロット一覧。total（絞り込み前の件数）を渡すと件数を「表示数 / 全体」で出す */
+  UI.prototype.renderFeatureList = function (features, tagsById, activeId, total) {
+    var countEl = this.refs.featureCount;
+    if (countEl) {
+      countEl.textContent = total == null || !total ? '' :
+        features.length === total ? tr('featureCount', { count: total }) : tr('featureCountFiltered', { count: features.length, total: total });
+    }
+    this._renderRows(this.refs.featureList, features, tagsById, activeId,
+      total ? '<div class="mpv-empty">' + esc(tr('noMatch')) + '</div>' : null);
   };
 
   /* 抽出結果リスト */
@@ -245,6 +252,88 @@
     }).join('\n');
   }
 
+  /* KML（Google Earth・地理院地図などで開ける形式）として書き出す。タグごとに Folder と Style を作り、
+   * タグIDと表示項目は ExtendedData に入れる（本アプリで読み直すと同じタグへ戻る）。 */
+  function toKML(features, tags, meta) {
+    var x = xmlEscape;
+    var tagList = (tags || []).slice();
+    var known = Object.create(null);
+    tagList.forEach(function (t) { known[t.id] = t; });
+    features.forEach(function (f) {
+      if (!known[f.tag]) { known[f.tag] = { id: f.tag, name: f.tag }; tagList.push(known[f.tag]); }
+    });
+    var used = tagList.filter(function (t) { return features.some(function (f) { return f.tag === t.id; }); });
+
+    var out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>'];
+    if (meta && meta.title) out.push('<name>' + x(meta.title) + '</name>');
+    used.forEach(function (t, i) {
+      var c = kmlColor(t.color);
+      out.push('<Style id="tag' + i + '">' +
+        '<IconStyle><color>ff' + c + '</color></IconStyle>' +
+        '<LineStyle><color>ff' + c + '</color><width>3</width></LineStyle>' +
+        '<PolyStyle><color>40' + c + '</color></PolyStyle></Style>');
+    });
+    used.forEach(function (t, i) {
+      out.push('<Folder><name>' + x(t.name || t.id) + '</name>');
+      features.forEach(function (f) {
+        if (f.tag !== t.id) return;
+        var props = f.properties || {};
+        var data = '<Data name="tag"><value>' + x(f.tag) + '</value></Data>' +
+          Object.keys(props).filter(function (k) { return k !== 'tag'; }).map(function (k) {
+            return '<Data name="' + x(k) + '"><value>' + x(formatVal(props[k])) + '</value></Data>';
+          }).join('');
+        // メモはHTMLとして書く（Google Earth 等は description をHTMLで表示するため、改行は <br> にする）
+        out.push('<Placemark id="' + x(f.id) + '">' + (f.name ? '<name>' + x(f.name) + '</name>' : '') +
+          (f.note ? '<description>' + x(esc(f.note).replace(/\r?\n/g, '<br>')) + '</description>' : '') +
+          '<styleUrl>#tag' + i + '</styleUrl><ExtendedData>' + data + '</ExtendedData>' +
+          kmlGeometry(f) + '</Placemark>');
+      });
+      out.push('</Folder>');
+    });
+    out.push('</Document>', '</kml>');
+    return out.join('\n');
+  }
+
+  function kmlGeometry(f) {
+    var tuple = function (p) { return kmlNumber(p[1]) + ',' + kmlNumber(p[0]); };
+    var ring = function (r) {
+      var closed = r.slice();
+      var a = closed[0], b = closed[closed.length - 1];
+      if (a && (a[0] !== b[0] || a[1] !== b[1])) closed.push(a);
+      return '<LinearRing><coordinates>' + closed.map(tuple).join(' ') + '</coordinates></LinearRing>';
+    };
+    if (f.type === 'point') return '<Point><coordinates>' + tuple(f.coordinates) + '</coordinates></Point>';
+    if (f.type === 'line') return '<LineString><tessellate>1</tessellate><coordinates>' + f.coordinates.map(tuple).join(' ') + '</coordinates></LineString>';
+    return '<Polygon><tessellate>1</tessellate>' + f.coordinates.map(function (r, i) {
+      var b = i === 0 ? 'outerBoundaryIs' : 'innerBoundaryIs';
+      return '<' + b + '>' + ring(r) + '</' + b + '>';
+    }).join('') + '</Polygon>';
+  }
+
+  /* 座標の数値を指数表記にしない（1e-7 などは他のツールが読めない） */
+  function kmlNumber(n) {
+    return Math.abs(n) < 1e-6 && n !== 0 ? n.toFixed(10).replace(/\.?0+$/, '') : String(n);
+  }
+
+  /* '#rrggbb' / '#rgb' → KMLの bbggrr（透過度は呼び出し側で前置）。それ以外の色表記は既定の緑。 */
+  function kmlColor(color) {
+    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || '').trim());
+    var hex = m ? m[1] : '2e7d32';
+    if (hex.length === 3) hex = hex.replace(/./g, function (ch) { return ch + ch; });
+    hex = hex.toLowerCase();
+    return hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2);
+  }
+
+  /* XMLの要素内容・属性値のエスケープ（XMLで使えない文字＝制御文字・U+FFFE/U+FFFF・対になっていないサロゲートは除く） */
+  function xmlEscape(s) {
+    return String(s == null ? '' : s)
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, '')
+      .replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '')
+      .replace(/[&<>"']/g, function (ch) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[ch];
+      });
+  }
+
   function toGeoJSONCollection(features) {
     return {
       type: 'FeatureCollection',
@@ -379,6 +468,7 @@
   }
 
   UI.toCSV = toCSV;
+  UI.toKML = toKML;
   UI.parseProps = parseProps;
   UI.formatProps = formatProps;
   UI.choose = choose;

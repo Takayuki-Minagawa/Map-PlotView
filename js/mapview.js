@@ -39,7 +39,10 @@
   var BASE_Z_INDEX = 1;
   var OVERLAY_Z_INDEX = 10;
   var SEARCH_COLOR = '#ff5722';
+  var MEASURE_COLOR = '#d81b60';
   var MIN_DRAG_PX = 4; // 矩形選択とみなす最小のドラッグ量
+  var MIN_VERTEX_PX = 3; // 計測でこれより近いクリックは同じ点とみなす（ダブルクリックの2回目など）
+  var CLOSE_RING_PX = 8; // 面積の計測で始点のこれ以内をクリックしたら「閉じる」操作とみなし、頂点を足さない
 
   function MapView() {
     this.map = null;
@@ -53,6 +56,7 @@
     this.searchMarker = null;
     this.locationLayer = null;
     this._editingId = null;         // 形状編集中のfeatureId
+    this._measure = null;           // 計測セッション（startMeasure の戻り値）
     this._locateCallbacks = null;
     this._onFeatureClick = null;
   }
@@ -88,7 +92,37 @@
     this.featureGroup = global.L.featureGroup().addTo(this.map);
     this._watchResize(el);
     this._watchLocation();
+    this._addCursorPosition();
+    var onContextMenu = handlers.onMapContextMenu;
+    if (onContextMenu) {
+      // 右クリック（タッチ端末では長押し）。形状編集・計測中は頂点操作と紛れるので出さない
+      this.map.on('contextmenu', function (e) {
+        if (self._editingId != null || self._measure) return;
+        // 値は±180°の範囲へ折り返し、ポップアップはクリックした位置（横に並んだ地図の写し）に出す
+        onContextMenu(e.latlng.wrap(), e.latlng);
+      });
+    }
     return this.map;
+  };
+
+  /* 地図左下にマウス位置の緯度経度を出す（タッチ端末ではマウス移動が無いので空のまま隠れる） */
+  MapView.prototype._addCursorPosition = function () {
+    var L = global.L;
+    if (!L.Control || !L.Control.extend) return;
+    var Ctl = L.Control.extend({
+      onAdd: function () {
+        var div = L.DomUtil.create('div', 'mpv-cursorpos');
+        div.setAttribute('aria-hidden', 'true');
+        L.DomEvent.disableClickPropagation(div);
+        return div;
+      }
+    });
+    var el = new Ctl({ position: 'bottomleft' }).addTo(this.map).getContainer();
+    this.map.on('mousemove', function (e) {
+      var p = e.latlng.wrap();
+      el.textContent = p.lat.toFixed(5) + ', ' + p.lng.toFixed(5);
+    });
+    this.map.on('mouseout', function () { el.textContent = ''; });
   };
 
   /* 詳細パネルの開閉などで地図領域の大きさが変わったら、中心を保ったまま再計算する。
@@ -162,7 +196,7 @@
 
     layer.bindPopup(popupHtml(feature, tag));
     layer.on('click', function () {
-      if (self._editingId) return; // 形状編集中は選択を切り替えない
+      if (self._editingId || self._measure) return; // 形状編集・計測中は選択を切り替えない
       if (self._onFeatureClick) self._onFeatureClick(feature.id);
     });
     layer.addTo(this.featureGroup);
@@ -306,9 +340,8 @@
 
   /* ---- 検索地点・現在地 ---- */
 
-  /* 検索地点へ移動してマーカーを立てる。action: { label, onClick } を渡すとポップアップにボタンを出す。 */
-  MapView.prototype.showSearchMarker = function (latlng, title, action) {
-    this.clearSearchMarker();
+  /* 名称・座標・ボタン群のポップアップ内容。actions: [{ label, onClick }] */
+  function popupNode(title, latlng, actions) {
     var node = document.createElement('div');
     node.className = 'mpv-popup';
     var name = document.createElement('b');
@@ -318,14 +351,29 @@
     coords.textContent = round(latlng[0]) + ', ' + round(latlng[1]);
     node.appendChild(document.createElement('br'));
     node.appendChild(coords);
-    if (action) {
+    (actions || []).forEach(function (action) {
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'mpv-mini mpv-popup__action';
       btn.textContent = action.label;
       btn.addEventListener('click', action.onClick);
       node.appendChild(btn);
-    }
+    });
+    return node;
+  }
+
+  /* 地図上の任意の地点にボタン付きのポップアップを開く（右クリックメニュー）。anchor を渡すとそこに出す */
+  MapView.prototype.openPointPopup = function (latlng, title, actions, anchor) {
+    global.L.popup({ className: 'mpv-pointmenu' })
+      .setLatLng(anchor || latlng)
+      .setContent(popupNode(title, latlng, actions))
+      .openOn(this.map);
+  };
+
+  /* 検索地点へ移動してマーカーを立てる。action: { label, onClick } を渡すとポップアップにボタンを出す。 */
+  MapView.prototype.showSearchMarker = function (latlng, title, action) {
+    this.clearSearchMarker();
+    var node = popupNode(title, latlng, action ? [action] : []);
     this.map.setView(latlng, Math.max(this.map.getZoom(), 15));
     this.searchMarker = global.L.marker(latlng, {
       icon: global.Symbols.divIcon('🔍', SEARCH_COLOR),
@@ -447,6 +495,82 @@
     document.addEventListener('pointercancel', onCancel);
 
     return cleanup;
+  };
+
+  /* ---- 距離・面積の計測 ---- */
+
+  /* 地図のクリック（タップ）で頂点を置いていく計測セッションを始める。mode: 'line'（距離）| 'area'（面積）。
+   * 頂点が変わるたびに onChange([[緯度,経度], ...]) を呼ぶ。計測中はプロットのクリック・ポップアップを無効にする。
+   * 戻り値 { undo() → 取り消せたか, count(), coords() → 線/面の内部座標, stop() }。 */
+  MapView.prototype.startMeasure = function (mode, onChange) {
+    var L = global.L, map = this.map, self = this;
+    this.stopMeasure();
+    var points = [];
+    var base = { color: MEASURE_COLOR, interactive: false, pmIgnore: true };
+    var shape = (mode === 'area'
+      ? L.polygon([], Object.assign({ weight: 3, fillOpacity: 0.12 }, base))
+      : L.polyline([], Object.assign({ weight: 3 }, base))).addTo(map);
+    var guide = L.polyline([], Object.assign({ weight: 2, dashArray: '4,6' }, base)).addTo(map);
+    var vertices = L.layerGroup().addTo(map);
+    var container = map.getContainer();
+    var dblZoom = map.doubleClickZoom && map.doubleClickZoom.enabled();
+    if (dblZoom) map.doubleClickZoom.disable();
+    container.classList.add('mpv-measuring');
+
+    function redraw() {
+      shape.setLatLngs(points);
+      guide.setLatLngs([]);
+      vertices.clearLayers();
+      points.forEach(function (p) {
+        L.circleMarker(p, Object.assign({ radius: 4, weight: 2, fillColor: MEASURE_COLOR, fillOpacity: 1 }, base, { color: '#fff' })).addTo(vertices);
+      });
+      if (onChange) onChange(points.map(function (p) { return [p.lat, p.lng]; }));
+    }
+    function onClick(e) {
+      var px = map.latLngToContainerPoint(e.latlng);
+      var near = function (p, tol) { return p && map.latLngToContainerPoint(p).distanceTo(px) < tol; };
+      if (near(points[points.length - 1], MIN_VERTEX_PX)) return;
+      if (mode === 'area' && points.length >= 3 && near(points[0], CLOSE_RING_PX)) return;
+      points.push(e.latlng);
+      redraw();
+    }
+    function onMove(e) {
+      if (!points.length) return;
+      var last = points[points.length - 1];
+      guide.setLatLngs(mode === 'area' && points.length > 1 ? [last, e.latlng, points[0]] : [last, e.latlng]);
+    }
+    function clearGuide() { guide.setLatLngs([]); }
+    map.on('click', onClick);
+    map.on('mousemove', onMove);
+    map.on('mouseout', clearGuide); // 地図の外（印刷ボタンなど）へ出たら案内線を残さない
+
+    var session = {
+      mode: mode,
+      undo: function () {
+        if (!points.length) return false;
+        points.pop();
+        redraw();
+        return true;
+      },
+      count: function () { return points.length; },
+      coords: function () { return layerToCoords(mode === 'area' ? 'polygon' : 'line', shape); },
+      stop: function () {
+        map.off('click', onClick);
+        map.off('mousemove', onMove);
+        map.off('mouseout', clearGuide);
+        [shape, guide, vertices].forEach(function (l) { map.removeLayer(l); });
+        container.classList.remove('mpv-measuring');
+        if (dblZoom) map.doubleClickZoom.enable();
+        if (self._measure === session) self._measure = null;
+      }
+    };
+    this._measure = session;
+    redraw();
+    return session;
+  };
+
+  MapView.prototype.stopMeasure = function () {
+    if (this._measure) this._measure.stop();
   };
 
   MapView.prototype.clearSelectionRect = function () {
