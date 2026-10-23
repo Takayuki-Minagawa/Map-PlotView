@@ -42,6 +42,7 @@
   var MEASURE_COLOR = '#d81b60';
   var MIN_DRAG_PX = 4; // 矩形選択とみなす最小のドラッグ量
   var MIN_VERTEX_PX = 3; // 計測でこれより近いクリックは同じ点とみなす（ダブルクリックの2回目など）
+  var CLOSE_RING_PX = 8; // 面積の計測で始点のこれ以内をクリックしたら「閉じる」操作とみなし、頂点を足さない
 
   function MapView() {
     this.map = null;
@@ -97,7 +98,8 @@
       // 右クリック（タッチ端末では長押し）。形状編集・計測中は頂点操作と紛れるので出さない
       this.map.on('contextmenu', function (e) {
         if (self._editingId != null || self._measure) return;
-        onContextMenu(e.latlng.wrap());
+        // 値は±180°の範囲へ折り返し、ポップアップはクリックした位置（横に並んだ地図の写し）に出す
+        onContextMenu(e.latlng.wrap(), e.latlng);
       });
     }
     return this.map;
@@ -360,10 +362,10 @@
     return node;
   }
 
-  /* 地図上の任意の地点にボタン付きのポップアップを開く（右クリックメニュー） */
-  MapView.prototype.openPointPopup = function (latlng, title, actions) {
+  /* 地図上の任意の地点にボタン付きのポップアップを開く（右クリックメニュー）。anchor を渡すとそこに出す */
+  MapView.prototype.openPointPopup = function (latlng, title, actions, anchor) {
     global.L.popup({ className: 'mpv-pointmenu' })
-      .setLatLng(latlng)
+      .setLatLng(anchor || latlng)
       .setContent(popupNode(title, latlng, actions))
       .openOn(this.map);
   };
@@ -525,8 +527,10 @@
       if (onChange) onChange(points.map(function (p) { return [p.lat, p.lng]; }));
     }
     function onClick(e) {
-      var last = points[points.length - 1];
-      if (last && map.latLngToContainerPoint(last).distanceTo(map.latLngToContainerPoint(e.latlng)) < MIN_VERTEX_PX) return;
+      var px = map.latLngToContainerPoint(e.latlng);
+      var near = function (p, tol) { return p && map.latLngToContainerPoint(p).distanceTo(px) < tol; };
+      if (near(points[points.length - 1], MIN_VERTEX_PX)) return;
+      if (mode === 'area' && points.length >= 3 && near(points[0], CLOSE_RING_PX)) return;
       points.push(e.latlng);
       redraw();
     }

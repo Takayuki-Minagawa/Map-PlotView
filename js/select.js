@@ -59,9 +59,8 @@
     return arr.reduce(function (acc, x) { return acc.concat(flatten(x)); }, []);
   }
 
-  /* 計測の地球半径。turf.length（平均半径）/ turf.area（赤道半径）と同じ値にして結果を揃える */
-  var MEAN_RADIUS = 6371008.8;
-  var EQUATOR_RADIUS = 6378137;
+  /* 計測の地球半径（平均半径）。turf 7 の length / area と同じ値にして結果を揃える */
+  var EARTH_RADIUS = 6371008.8;
   var RAD = Math.PI / 180;
 
   /* 2点 [緯度,経度] 間の大円距離（m, haversine） */
@@ -69,7 +68,7 @@
     var dLat = (b[0] - a[0]) * RAD, dLng = (b[1] - a[1]) * RAD;
     var h = Math.pow(Math.sin(dLat / 2), 2) +
       Math.cos(a[0] * RAD) * Math.cos(b[0] * RAD) * Math.pow(Math.sin(dLng / 2), 2);
-    return 2 * MEAN_RADIUS * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+    return 2 * EARTH_RADIUS * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
   }
 
   /* 頂点列 [[緯度,経度], ...] の総延長（m）。closed なら終点→始点も足す（面の周長） */
@@ -92,7 +91,7 @@
       var lower = pts[i], middle = pts[(i + 1) % n], upper = pts[(i + 2) % n];
       total += (upper[1] - lower[1]) * RAD * Math.sin(middle[0] * RAD);
     }
-    return Math.abs(total * EQUATOR_RADIUS * EQUATOR_RADIUS / 2);
+    return Math.abs(total * EARTH_RADIUS * EARTH_RADIUS / 2);
   }
 
   /* 面（外周リング＋穴）の面積（m²） */

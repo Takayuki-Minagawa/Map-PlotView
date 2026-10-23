@@ -264,8 +264,8 @@
     });
     var used = tagList.filter(function (t) { return features.some(function (f) { return f.tag === t.id; }); });
 
-    var out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>',
-      '<name>' + x((meta && meta.title) || 'Map PlotView') + '</name>'];
+    var out = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>'];
+    if (meta && meta.title) out.push('<name>' + x(meta.title) + '</name>');
     used.forEach(function (t, i) {
       var c = kmlColor(t.color);
       out.push('<Style id="tag' + i + '">' +
@@ -282,8 +282,9 @@
           Object.keys(props).filter(function (k) { return k !== 'tag'; }).map(function (k) {
             return '<Data name="' + x(k) + '"><value>' + x(formatVal(props[k])) + '</value></Data>';
           }).join('');
-        out.push('<Placemark id="' + x(f.id) + '"><name>' + x(f.name || f.id) + '</name>' +
-          (f.note ? '<description>' + x(f.note) + '</description>' : '') +
+        // メモはHTMLとして書く（Google Earth 等は description をHTMLで表示するため、改行は <br> にする）
+        out.push('<Placemark id="' + x(f.id) + '">' + (f.name ? '<name>' + x(f.name) + '</name>' : '') +
+          (f.note ? '<description>' + x(esc(f.note).replace(/\r?\n/g, '<br>')) + '</description>' : '') +
           '<styleUrl>#tag' + i + '</styleUrl><ExtendedData>' + data + '</ExtendedData>' +
           kmlGeometry(f) + '</Placemark>');
       });
@@ -294,7 +295,7 @@
   }
 
   function kmlGeometry(f) {
-    var tuple = function (p) { return p[1] + ',' + p[0]; };
+    var tuple = function (p) { return kmlNumber(p[1]) + ',' + kmlNumber(p[0]); };
     var ring = function (r) {
       var closed = r.slice();
       var a = closed[0], b = closed[closed.length - 1];
@@ -309,6 +310,11 @@
     }).join('') + '</Polygon>';
   }
 
+  /* 座標の数値を指数表記にしない（1e-7 などは他のツールが読めない） */
+  function kmlNumber(n) {
+    return Math.abs(n) < 1e-6 && n !== 0 ? n.toFixed(10).replace(/\.?0+$/, '') : String(n);
+  }
+
   /* '#rrggbb' / '#rgb' → KMLの bbggrr（透過度は呼び出し側で前置）。それ以外の色表記は既定の緑。 */
   function kmlColor(color) {
     var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || '').trim());
@@ -318,10 +324,11 @@
     return hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2);
   }
 
-  /* XMLの要素内容・属性値のエスケープ（XMLで使えない制御文字は除く） */
+  /* XMLの要素内容・属性値のエスケープ（XMLで使えない文字＝制御文字・U+FFFE/U+FFFF・対になっていないサロゲートは除く） */
   function xmlEscape(s) {
     return String(s == null ? '' : s)
-      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, '')
+      .replace(/[\ud800-\udbff](?![\udc00-\udfff])|(^|[^\ud800-\udbff])[\udc00-\udfff]/g, '$1')
       .replace(/[&<>"']/g, function (ch) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[ch];
       });

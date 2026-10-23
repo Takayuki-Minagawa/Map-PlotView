@@ -106,6 +106,18 @@ test('計測: 面積を測って「プロットに追加」で面として登録
   assert.equal(h.state.features.has(ed.feature.id), false, '追加は元に戻せる');
 });
 
+test('計測: 追加できない形状（±180°をまたぐ線）なら計測を残して知らせる', () => {
+  const h = loaded();
+  h.el('btnMeasureLine').fire('click');
+  const m = h.mapview.measure;
+  m.click(35, 179.5);
+  m.click(35, 180.5);
+  h.el('btnMeasureAdd').fire('click');
+  assert.equal(h.alerts.length, 1);
+  assert.equal(h.mapview.measure, m, '計測は続いている');
+  assert.equal(h.cap.featureEditor, undefined, '編集画面は開かない');
+});
+
 test('計測: 別のセッションを始めると計測は終わる', () => {
   const h = loaded();
   h.el('btnMeasureLine').fire('click');
@@ -118,9 +130,11 @@ test('右クリックメニュー: 点の追加と座標コピー（クリップ
   const copied = [];
   const h = loaded({ clipboard: { writeText: t => { copied.push(t); return Promise.resolve(); } } });
   // 地図の右クリックは initMap に渡したハンドラを呼ぶ
-  h.mapview.handlers.onMapContextMenu({ lat: 35.1234567, lng: 139.7654321 });
+  const anchor = { lat: 35.1234567, lng: 499.7654321 }; // 横に並んだ地図の写しの上
+  h.mapview.handlers.onMapContextMenu({ lat: 35.1234567, lng: 139.7654321 }, anchor);
   const menu = h.mapview.pointPopup;
   assert.deepEqual(menu.latlng, [35.123457, 139.765432], '6桁に丸める');
+  assert.equal(menu.anchor, anchor, 'ポップアップはクリックした位置に出す');
   assert.equal(menu.actions.length, 2);
 
   menu.actions[1].onClick();
@@ -161,7 +175,7 @@ test('印刷: 印刷用の配置にしてから印刷し、印刷後に戻す', 
   h.el('btnMeasureLine').fire('click');
   h.el('btnPrint').fire('click');
   assert.deepEqual(h.printed, [true], '印刷時は印刷用の配置');
-  assert.equal(h.mapview.measure, null, '進行中の計測は終了');
+  assert.notEqual(h.mapview.measure, null, '進行中の計測は取り消さない（計測した線も印刷できる）');
   assert.match(h.el('printTitle').textContent, /^調査 — /);
   h.winListeners.afterprint();
   assert.equal(h.body.classList.contains('is-printing'), false);

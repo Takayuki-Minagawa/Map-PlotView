@@ -478,7 +478,10 @@
     var done = document.getElementById('btnReshapeDone');
     var mUndo = document.getElementById('btnMeasureUndo');
     var mAdd = document.getElementById('btnMeasureAdd');
-    if (bar) bar.hidden = !kind;
+    if (bar) {
+      bar.hidden = !kind;
+      bar.classList.toggle('is-measuring', kind === 'measuringNow');
+    }
     if (label) label.textContent = kind === 'measuringNow' ? measureText() : kind ? tr(kind) : '';
     if (done) done.hidden = kind !== 'reshapeEditing';
     if (mUndo) { mUndo.hidden = kind !== 'measuringNow'; mUndo.disabled = !measurePoints.length; }
@@ -696,6 +699,12 @@
     if (!measureCanBePlot()) return;
     var type = measureSession.mode === 'area' ? 'polygon' : 'line';
     var coords = measureSession.coords();
+    // 追加できない形状（±180°をまたぐ線など）なら、計測は残したまま知らせる
+    var v = Store.validateFeature({ id: 'measure', type: type, coordinates: coords });
+    if (!v.ok) {
+      alert(tr('drawInvalid', { errors: v.errors.join(' / ') }));
+      return;
+    }
     cancelMeasure();
     openNewFeature(type, coords, '');
   }
@@ -705,7 +714,7 @@
   }
 
   /* ---- 右クリック（長押し）メニュー ---- */
-  function openPointMenu(latlng) {
+  function openPointMenu(latlng, anchor) {
     if (sessionActive()) return;
     var lat = round(latlng.lat), lng = round(latlng.lng);
     mapview.openPointPopup([lat, lng], tr('pointMenuTitle'), [
@@ -724,7 +733,7 @@
           copyText(lat + ', ' + lng);
         }
       }
-    ]);
+    ], anchor);
   }
 
   /* クリップボードへコピーし、結果をステータスに出す（使えない環境では値を示して手で写せるようにする） */
@@ -738,10 +747,10 @@
 
   /* ---- 印刷 ---- */
   /* 印刷用の配置（地図だけ＋タイトル）を画面にも適用して地図の大きさを合わせてから印刷する。
-   * beforeprint の時点では印刷用CSSがまだ効いておらず、Leafletが地図の大きさを取り違えるため。 */
+   * beforeprint の時点では印刷用CSSがまだ効いておらず、Leafletが地図の大きさを取り違えるため。
+   * 進行中の計測・形状編集は取り消さない（計測した線もそのまま印刷できる。操作バーは印刷に出さない）。 */
   function printMap() {
     if (!global.print) return;
-    cancelSessions();
     enterPrintLayout();
     setTimeout(function () { global.print(); }, 400); // タイルの読み直しを待つ
   }

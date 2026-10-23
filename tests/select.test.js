@@ -88,7 +88,7 @@ test('distance / pathLength: 大円距離（turf.length と同じ平均半径）
 
 test('ringArea / polygonArea: 球面上の面積（向き・閉じ方によらない、穴は差し引く）', () => {
   const { Select } = newSelect();
-  const R = 6378137, rad = Math.PI / 180;
+  const R = 6371008.8, rad = Math.PI / 180; // turf 7 の area と同じ平均半径
   // 経線と緯線で囲まれた矩形の厳密な面積 R²·Δλ·(sinφ2 − sinφ1)
   const exact = R * R * (1 * rad) * (Math.sin(36 * rad) - Math.sin(35 * rad));
   const ring = [[35, 139], [35, 140], [36, 140], [36, 139]];

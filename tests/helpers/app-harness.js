@@ -107,7 +107,7 @@ function makeApp(opts) {
     getEditedCoords() { return this._editingId != null ? this.editedCoords : null; },
     stopGeometryEdit() { this._editingId = null; },
     startRectangleSelect(cb) { this.rectDone = cb; return () => { this.rectDone = null; }; },
-    openPointPopup(latlng, title, actions) { this.pointPopup = { latlng, title, actions }; },
+    openPointPopup(latlng, title, actions, anchor) { this.pointPopup = { latlng, title, actions, anchor }; },
     /* 計測のスタブ：click(lat, lng) で頂点を足す */
     startMeasure(mode, onChange) {
       const points = [];

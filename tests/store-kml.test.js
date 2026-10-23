@@ -6,9 +6,14 @@ const jsyaml = require('js-yaml');
 const { DOMParser } = require('@xmldom/xmldom');
 const { createSandbox, loadScript } = require('./helpers/load');
 
-/* ブラウザの DOMParser の代わりに xmldom を注入する */
+/* ブラウザの DOMParser の代わりに xmldom を注入する。ブラウザと同じく、整形式でないXML（未定義の実体参照など）は
+ * 警告で済ませず拒否させる（xmldom の既定はエラーでも読み進めるため、ブラウザより緩い） */
+function StrictDOMParser() {
+  return new DOMParser({ onError(level, msg) { if (level !== 'warning') throw new Error(msg); } });
+}
+
 function newStore(withParser) {
-  const sandbox = createSandbox(withParser === false ? { jsyaml } : { jsyaml, DOMParser });
+  const sandbox = createSandbox(withParser === false ? { jsyaml } : { jsyaml, DOMParser: StrictDOMParser });
   ['i18n.js', 'symbols.js', 'store.js', 'ui.js'].forEach(name => loadScript(name, sandbox));
   return sandbox;
 }
@@ -101,6 +106,43 @@ test('parseKML: Placemark が無い・構文エラー・DOMParser 非対応は�
   assert.throws(() => noParser.Store.parseKML(KML), /DOMParser/);
 });
 
+test('parseKML: 他ツールの書き出し — 共有スタイル/StyleMap の色、表のdescription、宣言の無い gx:、先頭の空白、指数表記', () => {
+  const { Store } = newStore();
+  const r = Store.parseKML(`
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+  <Style id="s-red"><IconStyle><color>ff0000ff</color></IconStyle></Style>
+  <Style id="s-hl"><IconStyle><color>ff00ff00</color></IconStyle></Style>
+  <StyleMap id="m-red"><Pair><key>normal</key><styleUrl>#s-red</styleUrl></Pair><Pair><key>highlight</key><styleUrl>#s-hl</styleUrl></Pair></StyleMap>
+  <Folder><name>駅</name>
+    <Placemark><name>東京駅</name><styleUrl>#m-red</styleUrl>
+      <description><![CDATA[<table><tr><td>名称</td><td>東京駅</td></tr><tr><td>種別</td><td>駅</td></tr></table>]]></description>
+      <Point><coordinates>1.3976e2,3.568e1</coordinates></Point></Placemark>
+  </Folder>
+  <Folder><name>軌跡</name>
+    <Placemark><Style><LineStyle><color>ff112233</color></LineStyle></Style>
+      <gx:Track><gx:coord>139.5 35.5 0</gx:coord><gx:coord>139.6 35.6 0</gx:coord></gx:Track></Placemark>
+  </Folder>
+  <Placemark><name>空の穴</name><Polygon>
+    <outerBoundaryIs><LinearRing><coordinates>139,35 140,35 140,36 139,35</coordinates></LinearRing></outerBoundaryIs>
+    <innerBoundaryIs><LinearRing><coordinates></coordinates></LinearRing></innerBoundaryIs>
+  </Polygon></Placemark>
+</Document></kml>`);
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(r.tags.map(t => [t.id, t.color]), [['駅', '#ff0000'], ['軌跡', '#332211'], [Store.UNCATEGORIZED_ID, '#9e9e9e']]);
+  assert.equal(r.features[0].note, '名称\t東京駅\n種別\t駅', '表のセルはタブ、行は改行で区切る');
+  assert.deepEqual(r.features[0].coordinates, [35.68, 139.76]);
+  assert.deepEqual(r.features[1].coordinates, [[35.5, 139.5], [35.6, 139.6]]);
+  assert.equal(r.features[2].coordinates.length, 1, '中身の無い穴は捨てる');
+});
+
+test('parseKML: 1つのFolder名を別々のタグの表示名に使い回さない', () => {
+  const { Store } = newStore();
+  const pm = tag => `<Placemark><ExtendedData><Data name="tag"><value>${tag}</value></Data></ExtendedData><Point><coordinates>139,35</coordinates></Point></Placemark>`;
+  const r = Store.parseKML(`<kml><Document><Folder><name>B名</name>${pm('a')}${pm('b')}</Folder></Document></kml>`);
+  assert.deepEqual(r.tags.map(t => [t.id, t.name]), [['a', 'B名'], ['b', 'b']]);
+});
+
 test('parseKML: 重複した id 属性は採番し直す', () => {
   const { Store } = newStore();
   const r = Store.parseKML(`<kml><Document>
@@ -152,6 +194,15 @@ test('parseGPX: 中身が無い・GPXでないXMLはエラー', () => {
   assert.throws(() => Store.parseGPX('<kml/>'), /ウェイポイント/);
 });
 
+test('parseGPX: GPX 1.0 の表題、ルート・トラックの説明', () => {
+  const { Store } = newStore();
+  const r = Store.parseGPX(`<gpx version="1.0"><name>旧形式</name>
+    <rte><name>R</name><desc>計画ルート</desc><rtept lat="35" lon="139"/><rtept lat="35.1" lon="139.1"/></rte>
+    <trk><name>T</name><cmt>実績</cmt><trkseg><trkpt lat="35" lon="139"/><trkpt lat="35.1" lon="139.1"/></trkseg></trk></gpx>`);
+  assert.deepEqual(r.meta, { title: '旧形式' });
+  assert.deepEqual(r.features.map(f => f.note), ['計画ルート', '実績']);
+});
+
 test('detectFormat / parseText: KML・GPX を拡張子と内容で判定する', () => {
   const { Store } = newStore();
   assert.equal(Store.detectFormat('a.KML', ''), 'kml');
@@ -159,6 +210,9 @@ test('detectFormat / parseText: KML・GPX を拡張子と内容で判定する',
   assert.equal(Store.detectFormat('export.xml', '﻿<?xml version="1.0"?><gpx></gpx>'), 'gpx');
   assert.equal(Store.detectFormat('doc.xml', '<?xml version="1.0"?><kml></kml>'), 'kml');
   assert.equal(Store.detectFormat('', '<kml:kml xmlns:kml="x"/>'), 'kml');
+  assert.equal(Store.detectFormat('a.xml', '<?xml version="1.0"?><gpx/>'), 'gpx', '空要素のgpxも判定');
+  assert.equal(Store.detectFormat('map.kmz', 'PK\u0003\u0004'), 'kmz');
+  assert.throws(() => Store.parseText('kmz', ''), /KMZ/);
   assert.equal(Store.parseText('gpx', GPX).features.length, 5);
   assert.equal(Store.parseText('kml', KML).features.length, 6);
 });
@@ -184,13 +238,35 @@ test('UI.toKML → parseKML: タグ・表示項目・メモ・穴あき面が元
 
   const r = Store.parseKML(kml);
   assert.deepEqual(r.meta, { title: '案件 "X"' });
-  assert.deepEqual(r.features.map(f => [f.id, f.tag, f.name]), [['p1', 'site', 'A<棟>'], ['g1', 'site', '敷地'], ['l1', 'road', 'l1']]);
+  assert.deepEqual(r.features.map(f => [f.id, f.tag, f.name]), [['p1', 'site', 'A<棟>'], ['g1', 'site', '敷地'], ['l1', 'road', '']]);
   const p1 = r.features[0];
   assert.deepEqual(p1.coordinates, [35.69, 139.7]);
   assert.deepEqual(p1.properties, { 用途: '商業', 階数: 12, code: '007' });
   assert.equal(p1.note, 'メモ1\nメモ2');
   assert.deepEqual(r.features[1].coordinates, features[2].coordinates, '閉じて書き出したリングは開いて戻る');
-  assert.deepEqual(r.tags.map(t => [t.id, t.name]), [['site', '建設 & サイト'], ['road', '道路']], 'タグIDはExtendedData、名称はFolderから');
+  assert.deepEqual(r.tags.map(t => [t.id, t.name, t.color]), [['site', '建設 & サイト', '#2e7d32'], ['road', '道路', '#ff0000']],
+    'タグIDはExtendedData、名称はFolder、色はStyleから');
+});
+
+test('UI.toKML → parseKML: 山括弧・実体参照・空行・字下げを含むメモも元どおり', () => {
+  const { Store, UI } = newStore();
+  const note = 'see <https://example.com>\n  字下げ\n\n\n\n<b>太字</b> &amp; x\n末尾';
+  const kml = UI.toKML([{ id: 'p1', type: 'point', tag: 't', name: 'A', coordinates: [35, 139], note }], [], {});
+  assert.match(kml, /<description>see &amp;lt;https:\/\/example.com&amp;gt;&lt;br&gt;/, 'HTMLとして書き（XML内でさらにエスケープ）、改行は<br>');
+  assert.equal(Store.parseKML(kml).features[0].note, note);
+  const plain = UI.toKML([{ id: 'p1', type: 'point', tag: 't', name: 'A', coordinates: [35, 139], note: 'a & b' }], [], {});
+  assert.equal(Store.parseKML(plain).features[0].note, 'a & b', '改行の無いメモの実体参照も戻す');
+});
+
+test('UI.toKML: XMLに使えない文字（U+FFFF・対でないサロゲート）と指数表記の座標を出さない', () => {
+  const { Store, UI } = newStore();
+  const kml = UI.toKML([
+    { id: 'p1', type: 'point', tag: 't', name: 'a\uffffb' + '😀'.slice(0, 1) + 'c😀', coordinates: [1e-7, -2e-8] }
+  ], [], {});
+  assert.doesNotMatch(kml, /e-/, '指数表記なし');
+  const f = Store.parseKML(kml).features[0];
+  assert.equal(f.name, 'abc😀');
+  assert.deepEqual(f.coordinates, [0, -0]);
 });
 
 test('UI.toKML: 未定義タグ・不正な色・制御文字でも壊れたXMLにしない', () => {
@@ -198,7 +274,7 @@ test('UI.toKML: 未定義タグ・不正な色・制御文字でも壊れたXML�
   const kml = UI.toKML([
     { id: 'p1', type: 'point', tag: 'ghost', name: 'a\u0001b', coordinates: [35, 139] }
   ], [{ id: 'x', color: 'rgb(1,2,3)' }], {});
-  assert.match(kml, /<name>Map PlotView<\/name>/);
+  assert.doesNotMatch(kml, /<Document>\n<name>/, '表題が無ければ文書名は付けない');
   const r = Store.parseKML(kml);
   assert.equal(r.features[0].name, 'ab');
   assert.equal(r.features[0].tag, 'ghost');

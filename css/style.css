@@ -108,6 +108,9 @@ body { display: flex; flex-direction: column; min-height: 100vh; height: 100vh; 
   white-space: nowrap;
 }
 .mpv-editbar[hidden] { display: none; }
+/* 計測中は結果の文言が頂点ごとに変わるので、幅を固定し文言を1行目に置いてボタンが動かないようにする */
+.mpv-editbar.is-measuring { flex-wrap: wrap; justify-content: center; white-space: normal; width: min(440px, calc(100% - 20px)); }
+.mpv-editbar.is-measuring > span { flex: 1 1 100%; text-align: center; }
 
 /* パネル */
 .mpv-panel { background: var(--mpv-panel); border: 1px solid var(--mpv-border); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
